@@ -501,6 +501,7 @@ describe("executeAgentRun backend settings", () => {
 
         const planningCall = mocks.fetchInternalApi.mock.calls.find(([url]) => String(url).endsWith("/chat/completions"));
         const planningBody = JSON.parse(String(planningCall?.[1]?.body)) as { messages: Array<{ content: string }> };
+        expect(planningBody.messages[0].content).toContain("你是 星河创作 画布创作 Agent");
         const planningInput = JSON.parse(planningBody.messages[1].content) as { availableModels: Array<{ id: string; capability: string }> };
         expect(planningInput.availableModels).toEqual(expect.arrayContaining([expect.objectContaining({ id: "image-default", capability: "image" }), expect.objectContaining({ id: "image-creative", capability: "image" })]));
         expect(mocks.run?.plannerContext).toMatchObject({
