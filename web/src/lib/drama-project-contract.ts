@@ -144,6 +144,8 @@ export type DramaEpisode = {
     nextPreview: string;
     sourceRange: string;
     reviewStatus: DramaReviewStatus;
+    visualTaskId?: string;
+    visualError?: string;
     shots: DramaShot[];
     renderTask?: DramaRenderTask;
     visualReview?: DramaVisualReview;

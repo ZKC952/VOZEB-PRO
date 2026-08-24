@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 import { useParams, useRouter } from "next/navigation";
 
 import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
+import { waitForTextGenerationTask } from "@/services/api/text";
 import { createServerVideoGenerationTask } from "@/services/api/video";
 import { syncUserPointsFromHeaders } from "@/services/api/points";
 import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
@@ -127,7 +128,6 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     };
     const designVisuals = async () => {
         if (!episode.shots.length) return message.warning("请先完成内容解析");
-        updateEpisode(project.id, episode.id, { reviewStatus: "approved" });
         setDesigning(true);
         try {
             const response = await fetch("/api/drama/analyze", {
@@ -135,6 +135,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     requestId: `drama-visual:${project.id}:${episode.id}:${nanoid()}`,
+                    projectId: project.id,
                     phase: "visual",
                     summary: project.summary,
                     style: project.style,
@@ -154,18 +155,41 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 }),
             });
             syncUserPointsFromHeaders(response.headers, "system");
-            const payload = (await response.json().catch(() => ({}))) as { data?: DramaVisualAnalysis; msg?: string };
-            if (!response.ok || !payload.data) throw new Error(payload.msg || "AI 视觉方案生成失败");
-            await createVersion(project, "视觉方案生成前");
-            applyVisualAnalysis(project.id, episode.id, payload.data);
-            setStage("storyboard");
-            message.success("已按审核内容生成视觉方案");
+            const payload = (await response.json().catch(() => ({}))) as { data?: { task?: { id?: string } }; msg?: string };
+            const taskId = payload.data?.task?.id;
+            if (!response.ok || !taskId) throw new Error(payload.msg || "AI 视觉方案任务创建失败");
+            updateEpisode(project.id, episode.id, { reviewStatus: "approved", visualTaskId: taskId, visualError: undefined });
+            message.success("视觉方案已进入生成队列，可离开页面后再返回查看");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "AI 视觉方案生成失败");
         } finally {
             setDesigning(false);
         }
     };
+    useEffect(() => {
+        const taskId = episode.visualTaskId;
+        if (!taskId) return;
+        const controller = new AbortController();
+        void waitForTextGenerationTask(config, { id: taskId, model: config.textModel || config.model }, { signal: controller.signal, timeoutMs: 0 })
+            .then(async (content) => {
+                if (controller.signal.aborted) return;
+                const analysis = JSON.parse(content) as DramaVisualAnalysis;
+                const currentProject = useDramaStore.getState().projects.find((item) => item.id === project.id);
+                if (!currentProject) return;
+                await createVersion({ ...currentProject, episodes: currentProject.episodes.map((item) => (item.id === episode.id ? { ...item, visualTaskId: undefined, visualError: undefined } : item)) }, "视觉方案生成前");
+                if (controller.signal.aborted) return;
+                applyVisualAnalysis(project.id, episode.id, analysis);
+                setStage("storyboard");
+                message.success("已按审核内容生成视觉方案");
+            })
+            .catch((error) => {
+                if (controller.signal.aborted) return;
+                const detail = error instanceof Error ? error.message : "AI 视觉方案生成失败";
+                updateEpisode(project.id, episode.id, { visualTaskId: undefined, visualError: detail });
+                message.error(detail);
+            });
+        return () => controller.abort();
+    }, [applyVisualAnalysis, config, createVersion, episode.id, episode.visualTaskId, message, project.id, updateEpisode]);
     const openVersions = async () => {
         setVersionsOpen(true);
         setVersionsLoading(true);

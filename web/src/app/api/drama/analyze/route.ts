@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBody } from "@/lib/auth/request";
@@ -6,21 +6,29 @@ import { getAuthSettings, isAuthInputError, refundUserPoints } from "@/lib/auth/
 import { describeDramaAnalysisCandidate, dramaContentTool, dramaVisualTool, hasCompleteDramaContentAnalysis, hasUsableDramaToolArguments, normalizeDramaContentAnalysis, normalizeDramaToolArguments } from "@/lib/server/drama-analysis";
 import { mergeDramaContentAnalyses } from "@/lib/server/drama-analysis-merge";
 import { splitDramaScriptAtBoundary } from "@/lib/server/drama-analysis-segmentation";
+import { toSystemGenerationChannel } from "@/lib/server/generation-channel";
+import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
+import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
+import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
+import { maintenanceWorkerContextHeaders, requestRuntimeCredential, authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
 import { checkRateLimit } from "@/lib/server/security";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 import { isStructuredTextFailure, rankTextPlanningCandidates, requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
 import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody, type NormalizedDramaVisualInput } from "@/lib/server/drama-analysis-input";
 import { dramaShotDurationInstruction, resolveDramaVideoDurationPolicy } from "@/lib/server/drama-shot-config";
 import { analyzeDramaVisualBatches } from "@/lib/server/drama-visual-analysis-runtime";
+import { createTextTask } from "@/lib/server/text-task-store";
 
 export const runtime = "nodejs";
+export const maxDuration = 2400;
 
 export async function POST(request: Request) {
-    const user = await getCurrentUser();
+    const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (!(await checkRateLimit(`drama-analyze:${user.id}`, { maxRequests: 10, windowMs: 60_000 })).allowed) return NextResponse.json({ code: 429, data: null, msg: "剧本解析过于频繁，请稍后重试" }, { status: 429 });
+    const workerExecution = authorizedWorkerUserId(request) === user.id;
+    if (!workerExecution && !(await checkRateLimit(`drama-analyze:${user.id}`, { maxRequests: 10, windowMs: 60_000 })).allowed) return NextResponse.json({ code: 429, data: null, msg: "剧本解析过于频繁，请稍后重试" }, { status: 429 });
     let body: DramaAnalyzeBody;
     try {
         body = await readJsonBody(request, 8 * 1024 * 1024);
@@ -41,6 +49,35 @@ export async function POST(request: Request) {
     const model = settings.defaultModels.textModel;
     const candidates = resolveLogicalModelCandidates(settings, "text", model);
     if (!model || !candidates.length) return NextResponse.json({ code: 400, data: null, msg: "后台尚未配置可用的默认文本模型" }, { status: 400 });
+    if (phase === "visual" && !workerExecution) {
+        const task = await withGenerationConcurrencyLimit(user.id, "text", 5 * 60 * 1000, settings.generationConcurrency.text, async () => {
+            const configs = candidates.map((candidate) => ({ ...toSystemGenerationChannel(candidate), channelId: candidate.channelId, systemPrompt: "" }));
+            const created = await createTextTask({
+                userId: user.id,
+                config: configs[0],
+                candidateConfigs: configs.slice(1),
+                messages: [],
+                dramaAnalysis: { body },
+                surface: "drama",
+                projectId: dramaAnalysisText(body.projectId),
+                episodeId: visualInput!.payload.episode.id,
+                clientRequestId: requestId,
+            });
+            await scheduleGenerationTask("text", created.id, {
+                executionPhase: "created",
+                channelId: created.config.channelId,
+                provider: created.config.advancedConfig?.protocol || created.config.apiFormat,
+                nextPollAt: Date.now(),
+                lastUpstreamStatus: "created",
+            });
+            return created;
+        });
+        if (!task) return NextResponse.json({ code: 429, data: null, msg: "当前用户文本任务已达到并发上限" }, { status: 429 });
+        const origin = resolveInternalOrigin(new URL(request.url).origin);
+        const cookie = request.headers.get("cookie") || "";
+        after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));
+        return NextResponse.json({ code: 0, data: { task: { id: task.id, status: task.status, model } }, msg: "视觉方案已进入生成队列" }, { status: 202 });
+    }
     const requestedVideoModel = dramaAnalysisText(body.videoModel);
     const defaultVideoModel = settings.defaultModels.videoModel;
     const requestedVideoCandidates = phase === "content" && (requestedVideoModel || defaultVideoModel) ? resolveLogicalModelCandidates(settings, "video", requestedVideoModel || defaultVideoModel) : [];
@@ -72,7 +109,7 @@ export async function POST(request: Request) {
                         requestBatch: async (batch) => {
                             const call = await requestFunctionCall(
                                 resolveInternalOrigin(new URL(request.url).origin),
-                                request.headers.get("cookie") || "",
+                                requestRuntimeCredential(request, user.id),
                                 candidate,
                                 model,
                                 messagesFor(batch.payload),
@@ -101,7 +138,7 @@ export async function POST(request: Request) {
                 }
                 const result = await analyzeDramaContentCandidate({
                     origin: resolveInternalOrigin(new URL(request.url).origin),
-                    cookie: request.headers.get("cookie") || "",
+                    cookie: requestRuntimeCredential(request, user.id),
                     candidate,
                     model,
                     tool,
@@ -165,8 +202,11 @@ async function requestFunctionCall(
     allowRepair = true,
     signal?: AbortSignal,
 ) {
-    const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, `${idempotencyKey}:tool`, candidate.upstreamModel) };
-    const fallbackHeaders = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, `${idempotencyKey}:json`, candidate.upstreamModel) };
+    const authentication = maintenanceWorkerContextHeaders(cookie) || (cookie ? { cookie } : {});
+    const headers = new Headers({ "Content-Type": "application/json", ...systemAiBillingHeaders(billingModel, `${idempotencyKey}:tool`, candidate.upstreamModel) });
+    const fallbackHeaders = new Headers({ "Content-Type": "application/json", ...systemAiBillingHeaders(billingModel, `${idempotencyKey}:json`, candidate.upstreamModel) });
+    Object.entries(authentication).forEach(([name, value]) => headers.set(name, value));
+    Object.entries(authentication).forEach(([name, value]) => fallbackHeaders.set(name, value));
     const normalizeArguments = (argumentsText: string) => normalizeDramaToolArguments(argumentsText, tool.name);
     const call = await requestStructuredText({
         origin,

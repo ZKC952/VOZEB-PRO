@@ -152,6 +152,8 @@ describe("drama project service updates", () => {
             title: `第 ${index + 1} 集`,
             script: "剧本",
             shots: index === 100 ? shots : [],
+            visualTaskId: index === 100 ? "visual-task-one" : undefined,
+            visualError: index === 100 ? "视觉任务暂时失败" : undefined,
             visualReview:
                 index === 100 ? { mode: "text", status: "needs_revision", summary: "需要调整", issues: Array.from({ length: 9 }, (__, issueIndex) => ({ category: `问题 ${issueIndex}`, severity: "low", message: `说明 ${issueIndex}` })) } : undefined,
         }));
@@ -181,6 +183,7 @@ describe("drama project service updates", () => {
         expect(saved.episodes[100].shots[500].propIds).toHaveLength(51);
         expect(saved.episodes[100].shots[500].clueIds).toHaveLength(51);
         expect(saved.episodes[100].visualReview?.issues).toHaveLength(9);
+        expect(saved.episodes[100]).toMatchObject({ visualTaskId: "visual-task-one", visualError: "视觉任务暂时失败" });
         expect(saved.characters[200].references).toHaveLength(13);
     });
 

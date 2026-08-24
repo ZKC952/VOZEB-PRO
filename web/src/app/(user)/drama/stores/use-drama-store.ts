@@ -39,7 +39,7 @@ type DramaStore = {
     updateEpisode: (
         projectId: string,
         episodeId: string,
-        patch: Partial<Pick<DramaEpisode, "episodeNumber" | "title" | "script" | "scriptRichContent" | "outline" | "hook" | "nextPreview" | "sourceRange" | "reviewStatus" | "renderTask" | "visualReview">>,
+        patch: Partial<Pick<DramaEpisode, "episodeNumber" | "title" | "script" | "scriptRichContent" | "outline" | "hook" | "nextPreview" | "sourceRange" | "reviewStatus" | "visualTaskId" | "visualError" | "renderTask" | "visualReview">>,
     ) => void;
     buildStoryboard: (projectId: string, episodeId: string) => void;
     updateShot: (projectId: string, episodeId: string, shotId: string, patch: Partial<DramaShot>) => void;
@@ -338,6 +338,8 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
                           ...episode,
                           ...analysis.episode,
                           reviewStatus: "content_review" as const,
+                          visualTaskId: undefined,
+                          visualError: undefined,
                           renderTask: undefined,
                           shots: analysis.shots.map((shot, index) => ({
                               id: `shot-${nanoid()}`,
@@ -384,6 +386,8 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
                         ? {
                               ...episode,
                               reviewStatus: "visual_ready" as const,
+                              visualTaskId: undefined,
+                              visualError: undefined,
                               renderTask: undefined,
                               shots: episode.shots.map((shot) => {
                                   const visual = visualByShot.get(shot.id);

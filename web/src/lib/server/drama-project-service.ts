@@ -247,6 +247,8 @@ function normalizeEpisode(value: unknown, index: number): DramaEpisode | null {
         nextPreview: cleanText(input.nextPreview),
         sourceRange: cleanText(input.sourceRange),
         reviewStatus: reviewStatus(input.reviewStatus),
+        visualTaskId: optionalText(input.visualTaskId),
+        visualError: optionalText(input.visualError),
         shots: array(input.shots).map(normalizeShot),
         renderTask,
         visualReview: normalizeVisualReview(input.visualReview),
