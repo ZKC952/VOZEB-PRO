@@ -85,6 +85,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const config = useEffectiveConfig();
     const startingShotRef = useRef("");
     const storyboardTaskRef = useRef("");
+    const mountedRef = useRef(true);
     const [stage, setStage] = useState<DramaProjectStage>("script");
     const [assetsOpen, setAssetsOpen] = useState(false);
     const [episodeNavigatorOpen, setEpisodeNavigatorOpen] = useState(false);
@@ -100,6 +101,12 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const [expandedStoryboardShotId, setExpandedStoryboardShotId] = useState("");
     const { isWaiting: isCapacityWaiting, schedule: scheduleCapacityRetry } = useGenerationCapacityRetry();
     const audioReady = Boolean(config.audioModel.trim());
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
     const changeStage = (nextStage: DramaProjectStage) => {
         setStage(nextStage);
         setAssetsOpen(false);
@@ -167,7 +174,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 setSavingContent(true);
                 applyContentAnalysis(project.id, episode.id, analysis);
                 await saveProjectNow(project.id);
-                if (controller.signal.aborted) return;
+                const activeEpisodeId = useDramaStore.getState().projects.find((item) => item.id === project.id)?.activeEpisodeId;
+                if (!mountedRef.current || activeEpisodeId !== episode.id) return;
                 setContentLifecycle({ current: 6, description: "内容整理已完成" });
                 setStage("review");
                 message.success(`已提取 ${analysis.characters.length} 个角色、${analysis.scenes.length} 个场景和 ${analysis.shots.length} 个待审核镜头`);
