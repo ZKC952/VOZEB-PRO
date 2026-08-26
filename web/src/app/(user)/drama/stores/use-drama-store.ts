@@ -32,14 +32,19 @@ type DramaStore = {
     updateAsset: (projectId: string, kind: DramaAssetKind, id: string, patch: Partial<DramaCharacter & DramaClue>) => void;
     removeAsset: (projectId: string, kind: DramaAssetKind, id: string) => void;
     addEpisode: (projectId: string) => void;
-    importEpisodes: (projectId: string, drafts: DramaSourceEpisodeDraft[]) => void;
+    importEpisodes: (projectId: string, drafts: DramaSourceEpisodeDraft[]) => Promise<void>;
     deleteEpisode: (projectId: string, episodeId: string) => void;
     selectEpisode: (projectId: string, episodeId: string) => void;
     updateEpisodeNumber: (projectId: string, episodeId: string, episodeNumber: number) => void;
     updateEpisode: (
         projectId: string,
         episodeId: string,
-        patch: Partial<Pick<DramaEpisode, "episodeNumber" | "title" | "script" | "scriptRichContent" | "outline" | "hook" | "nextPreview" | "sourceRange" | "reviewStatus" | "renderTask" | "visualReview">>,
+        patch: Partial<
+            Pick<
+                DramaEpisode,
+                "episodeNumber" | "title" | "script" | "scriptRichContent" | "outline" | "hook" | "nextPreview" | "sourceRange" | "reviewStatus" | "contentTaskId" | "contentError" | "visualTaskId" | "visualError" | "renderTask" | "visualReview"
+            >
+        >,
     ) => void;
     buildStoryboard: (projectId: string, episodeId: string) => void;
     updateShot: (projectId: string, episodeId: string, shotId: string, patch: Partial<DramaShot>) => void;
@@ -225,22 +230,34 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
             };
             return { ...project, activeEpisodeId: episode.id, episodes: [...project.episodes, episode] };
         }),
-    importEpisodes: (projectId, drafts) =>
-        mutateProject(projectId, (project) => {
-            const episodes = drafts.map<DramaEpisode>((draft, index) => ({
-                id: `episode-${nanoid()}`,
-                episodeNumber: index + 1,
-                title: draft.title || `第 ${index + 1} 集`,
-                script: draft.script,
-                outline: "",
-                hook: "",
-                nextPreview: "",
-                sourceRange: draft.sourceRange,
-                reviewStatus: "draft",
-                shots: [],
+    importEpisodes: async (projectId, drafts) => {
+        const session = requireSession();
+        const key = sessionEpoch.key(session, projectId);
+        clearProjectSave(session, projectId);
+        await saveQueues.get(key)?.catch(() => undefined);
+        assertCurrent(session);
+        const current = get().projects.find((project) => project.id === projectId);
+        if (!current || !drafts.length) return;
+        const project = { ...projectWithImportedEpisodes(current, drafts), updatedAt: nextUpdatedAt(session, current) };
+        set((state) => ({ saveStateByProject: { ...state.saveStateByProject, [projectId]: { status: "saving", savedAt: state.saveStateByProject[projectId]?.savedAt } } }));
+        try {
+            const saved = await saveDramaProject(project);
+            assertCurrent(session);
+            set((state) => ({
+                projects: state.projects.map((item) => (item.id === saved.id ? saved : item)),
+                summaries: upsertSummary(state.summaries, saved),
+                syncError: undefined,
+                saveStateByProject: { ...state.saveStateByProject, [projectId]: { status: "saved", savedAt: saved.updatedAt } },
             }));
-            return episodes.length ? { ...project, activeEpisodeId: episodes[0].id, episodes } : project;
-        }),
+        } catch (error) {
+            if (sessionEpoch.isCurrent(session))
+                set((state) => ({
+                    syncError: error instanceof Error ? error.message : "短剧项目保存失败",
+                    saveStateByProject: { ...state.saveStateByProject, [projectId]: { status: "error", savedAt: state.saveStateByProject[projectId]?.savedAt } },
+                }));
+            throw error;
+        }
+    },
     deleteEpisode: (projectId, episodeId) =>
         mutateProject(projectId, (project) => {
             if (project.episodes.length <= 1) return project;
@@ -338,6 +355,10 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
                           ...episode,
                           ...analysis.episode,
                           reviewStatus: "content_review" as const,
+                          contentTaskId: undefined,
+                          contentError: undefined,
+                          visualTaskId: undefined,
+                          visualError: undefined,
                           renderTask: undefined,
                           shots: analysis.shots.map((shot, index) => ({
                               id: `shot-${nanoid()}`,
@@ -384,6 +405,8 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
                         ? {
                               ...episode,
                               reviewStatus: "visual_ready" as const,
+                              visualTaskId: undefined,
+                              visualError: undefined,
                               renderTask: undefined,
                               shots: episode.shots.map((shot) => {
                                   const visual = visualByShot.get(shot.id);
@@ -502,6 +525,22 @@ function normalizeName(value: string) {
 
 function hasActiveShotTask(shot: DramaShot) {
     return [shot.storyboardStatus, shot.storyboardEndStatus, shot.generationStatus, shot.audioStatus].some((status) => status === "queued" || status === "running");
+}
+
+export function projectWithImportedEpisodes(project: DramaProject, drafts: DramaSourceEpisodeDraft[], episodeId = () => `episode-${nanoid()}`): DramaProject {
+    const episodes = drafts.map<DramaEpisode>((draft, index) => ({
+        id: episodeId(),
+        episodeNumber: index + 1,
+        title: draft.title || `第 ${index + 1} 集`,
+        script: draft.script,
+        outline: "",
+        hook: "",
+        nextPreview: "",
+        sourceRange: draft.sourceRange,
+        reviewStatus: "draft",
+        shots: [],
+    }));
+    return episodes.length ? { ...project, activeEpisodeId: episodes[0].id, episodes } : project;
 }
 
 function queueSave(session: ClientSessionStamp, project: DramaProject) {

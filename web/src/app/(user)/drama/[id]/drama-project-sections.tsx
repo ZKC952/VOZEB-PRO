@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Drawer, Input, Popover, Tooltip } from "antd";
+import { Alert, App, Button, Drawer, Input, Popover, Tooltip } from "antd";
 import { ArrowLeft, Bot, Boxes, ChevronDown, ChevronRight, History, PanelLeft, Plus, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -378,6 +378,7 @@ export function DramaScriptPanel({
                         </div>
                     }
                 />
+                {episode.contentError ? <Alert className="mt-2.5" type="error" showIcon message="内容整理失败" description={episode.contentError} /> : null}
             </div>
             <div className="mt-3 flex min-h-0 flex-1 overflow-hidden bg-transparent">
                 <DramaScriptWorkspace project={project} episode={episode} selectedShotId={selectedShotId} onSelectedShotChange={onSelectedShotChange} analyzing={analyzing} onAnalyze={onAnalyze} />

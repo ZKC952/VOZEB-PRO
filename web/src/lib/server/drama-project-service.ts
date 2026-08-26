@@ -1,6 +1,18 @@
 import { nanoid } from "nanoid";
 
-import type { CreateDramaProjectInput, DramaAssetProfile, DramaAssetReference, DramaEpisode, DramaNamedAsset, DramaProject, DramaShot, DramaShotContinuity, DramaUtterance, DramaVideoMode } from "@/lib/drama-project-contract";
+import {
+    DRAMA_PROJECT_MAX_BYTES,
+    type CreateDramaProjectInput,
+    type DramaAssetProfile,
+    type DramaAssetReference,
+    type DramaEpisode,
+    type DramaNamedAsset,
+    type DramaProject,
+    type DramaShot,
+    type DramaShotContinuity,
+    type DramaUtterance,
+    type DramaVideoMode,
+} from "@/lib/drama-project-contract";
 import { dramaRichContentToPlainText, normalizeDramaScriptRichContent } from "@/lib/drama-script-rich-content";
 import { normalizeDramaImageSize } from "@/lib/drama-image-size";
 import { resolveDramaShotDuration } from "@/lib/server/drama-shot-config";
@@ -11,8 +23,6 @@ import { createDramaProject, deleteDramaProject, DramaProjectStoreError, findDra
 import { createDramaProjectVersion, getDramaProjectVersion, listDramaProjectVersions } from "@/lib/server/drama-project-version-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { deleteUserMediaAssetsCascade } from "@/lib/server/user-media-deletion-service";
-
-const MAX_PROJECT_BYTES = 2 * 1024 * 1024;
 
 export class DramaProjectServiceError extends Error {
     constructor(
@@ -74,6 +84,7 @@ export async function createDramaProjectForUser(userId: string, value: unknown) 
         createdAt: now,
         updatedAt: now,
     };
+    if (Buffer.byteLength(JSON.stringify(project)) > DRAMA_PROJECT_MAX_BYTES) throw new DramaProjectServiceError("短剧项目数据过大", 413);
     try {
         return await createDramaProject(userId, project);
     } catch (error) {
@@ -85,7 +96,7 @@ export async function createDramaProjectForUser(userId: string, value: unknown) 
 export async function updateDramaProjectForUser(userId: string, id: string, value: unknown) {
     const current = await getDramaProjectForUser(userId, id);
     const size = Buffer.byteLength(JSON.stringify(value || {}));
-    if (size > MAX_PROJECT_BYTES) throw new DramaProjectServiceError("短剧项目数据过大", 413);
+    if (size > DRAMA_PROJECT_MAX_BYTES) throw new DramaProjectServiceError("短剧项目数据过大", 413);
     const incomingUpdatedAt = parseTimestamp(object(value).updatedAt);
     if (incomingUpdatedAt && incomingUpdatedAt < parseTimestamp(current.updatedAt)) return current;
     const project = normalizeProject(value, current);
@@ -107,7 +118,7 @@ export async function createDramaProjectVersionForUser(userId: string, id: strin
     const current = await getDramaProjectForUser(userId, cleanText(id));
     const input = object(value);
     const snapshot = normalizeProject(input.snapshot, current);
-    if (Buffer.byteLength(JSON.stringify(snapshot)) > MAX_PROJECT_BYTES) throw new DramaProjectServiceError("短剧版本数据过大", 413);
+    if (Buffer.byteLength(JSON.stringify(snapshot)) > DRAMA_PROJECT_MAX_BYTES) throw new DramaProjectServiceError("短剧版本数据过大", 413);
     const reason = cleanText(input.reason) || "手动保存版本";
     return createDramaProjectVersion(userId, current.id, reason, snapshot);
 }
@@ -247,6 +258,10 @@ function normalizeEpisode(value: unknown, index: number): DramaEpisode | null {
         nextPreview: cleanText(input.nextPreview),
         sourceRange: cleanText(input.sourceRange),
         reviewStatus: reviewStatus(input.reviewStatus),
+        contentTaskId: optionalText(input.contentTaskId),
+        contentError: optionalText(input.contentError),
+        visualTaskId: optionalText(input.visualTaskId),
+        visualError: optionalText(input.visualError),
         shots: array(input.shots).map(normalizeShot),
         renderTask,
         visualReview: normalizeVisualReview(input.visualReview),
