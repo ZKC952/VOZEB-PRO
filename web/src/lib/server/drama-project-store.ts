@@ -129,6 +129,57 @@ export async function updateDramaProject(userId: string, project: DramaProject, 
     return project;
 }
 
+export async function assignDramaContentTask(userId: string, projectId: string, episodeId: string, taskId: string) {
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const now = new Date().toISOString();
+        const result = await postgresQuery<{ project_json: DramaProject }>(
+            `UPDATE drama_projects project
+             SET project_json = jsonb_set(
+                    jsonb_set(
+                        project.project_json,
+                        '{episodes}',
+                        (SELECT jsonb_agg(
+                            CASE WHEN episode.value->>'id' = $3
+                                THEN (episode.value - 'contentError') || jsonb_build_object('contentTaskId', $4::text)
+                                ELSE episode.value
+                            END ORDER BY episode.ordinality)
+                         FROM jsonb_array_elements(project.project_json->'episodes') WITH ORDINALITY AS episode(value, ordinality)),
+                        false
+                    ),
+                    '{updatedAt}',
+                    to_jsonb($6::text),
+                    true
+                 ),
+                 updated_at = $5::timestamptz
+             WHERE project.id = $1 AND project.user_id = $2
+               AND EXISTS (SELECT 1 FROM jsonb_array_elements(project.project_json->'episodes') episode WHERE episode->>'id' = $3)
+             RETURNING project_json`,
+            [projectId, userId, episodeId, taskId, new Date(now), now],
+        );
+        if (result.rows[0]) return result.rows[0].project_json;
+        const existing = await getDramaProject(projectId, userId);
+        throw new DramaProjectStoreError(existing ? "短剧剧集不存在" : "短剧项目不存在", 404);
+    }
+    let updated: DramaProject | null = null;
+    await mutateDatabase((db) => ({
+        ...db,
+        projects: db.projects.map((record) => {
+            if (record.userId !== userId || record.project.id !== projectId) return record;
+            if (!record.project.episodes.some((episode) => episode.id === episodeId)) throw new DramaProjectStoreError("短剧剧集不存在", 404);
+            const updatedAt = new Date(Math.max(Date.now(), Date.parse(record.project.updatedAt) + 1)).toISOString();
+            updated = {
+                ...record.project,
+                updatedAt,
+                episodes: record.project.episodes.map((episode) => (episode.id === episodeId ? { ...episode, contentTaskId: taskId, contentError: undefined } : episode)),
+            };
+            return { ...record, project: updated };
+        }),
+    }));
+    if (!updated) throw new DramaProjectStoreError("短剧项目不存在", 404);
+    return updated;
+}
+
 export async function deleteDramaProject(userId: string, id: string) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();

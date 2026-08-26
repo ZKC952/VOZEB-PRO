@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => {
         getDramaProject: vi.fn(),
         listDramaProjectSummaries: vi.fn(),
         updateDramaProject: vi.fn(),
+        assignDramaContentTask: vi.fn(),
         createDramaProjectVersion: vi.fn(),
         getDramaProjectVersion: vi.fn(),
         listDramaProjectVersions: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock("@/lib/server/drama-project-store", () => ({
     getDramaProject: mocks.getDramaProject,
     listDramaProjectSummaries: mocks.listDramaProjectSummaries,
     updateDramaProject: mocks.updateDramaProject,
+    assignDramaContentTask: mocks.assignDramaContentTask,
 }));
 vi.mock("@/lib/server/drama-project-version-store", () => ({
     createDramaProjectVersion: mocks.createDramaProjectVersion,

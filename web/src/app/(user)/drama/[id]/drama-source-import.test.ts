@@ -25,6 +25,9 @@ describe("drama source import workspace", () => {
         expect(editor).toContain("episodeId: episode.id");
         expect(editor).toContain('phase: "content"');
         expect(editor).toContain("contentTaskId: taskId");
+        expect(editor).toContain("await saveProjectNow(project.id)");
+        expect(editor).toContain('contentLifecycle?.status !== "error"');
+        expect(editor).toContain("{ contentTaskId: taskId, contentError: detail }");
         expect(editor).toContain("waitForTextGenerationTask(config");
     });
 });

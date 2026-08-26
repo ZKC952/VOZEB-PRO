@@ -30,6 +30,7 @@ export function DramaStageHeader({
     metrics = [],
     action,
     secondaryAction,
+    below,
     className = "",
 }: {
     step: string;
@@ -40,6 +41,7 @@ export function DramaStageHeader({
     metrics?: Array<{ label: string; value: ReactNode }>;
     action?: ReactNode;
     secondaryAction?: ReactNode;
+    below?: ReactNode;
     className?: string;
 }) {
     return (
@@ -72,6 +74,7 @@ export function DramaStageHeader({
                     </div>
                 ) : null}
             </div>
+            {below ? <div className="mt-2.5 min-w-0">{below}</div> : null}
         </header>
     );
 }

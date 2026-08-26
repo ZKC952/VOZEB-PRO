@@ -503,6 +503,26 @@ describe("client store session isolation", () => {
             vi.useRealTimers();
         }
     });
+
+    it("flushes critical Drama task state without waiting for the debounce timer", async () => {
+        vi.useFakeTimers();
+        try {
+            useUserStore.getState().setUser(user("user-a"));
+            const project = dramaProject("drama-a", "用户 A 短剧");
+            mocks.saveDramaProject.mockImplementationOnce(async (value: DramaProject) => value);
+            useDramaStore.setState({ projects: [project], hydrated: true, hydratedUserId: "user-a" });
+
+            useDramaStore.getState().updateEpisode(project.id, project.episodes[0].id, { contentTaskId: "text-task-one" });
+            await useDramaStore.getState().saveProjectNow(project.id);
+
+            expect(mocks.saveDramaProject).toHaveBeenCalledOnce();
+            expect(mocks.saveDramaProject).toHaveBeenCalledWith(expect.objectContaining({ episodes: [expect.objectContaining({ contentTaskId: "text-task-one" })] }));
+            await vi.runAllTimersAsync();
+            expect(mocks.saveDramaProject).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
 
 function deferred<T>() {

@@ -19,6 +19,7 @@ import { isStructuredTextFailure, rankTextPlanningCandidates, requestStructuredT
 import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody, type NormalizedDramaVisualInput } from "@/lib/server/drama-analysis-input";
 import { dramaShotDurationInstruction, resolveDramaVideoDurationPolicy } from "@/lib/server/drama-shot-config";
 import { analyzeDramaVisualBatches } from "@/lib/server/drama-visual-analysis-runtime";
+import { assignDramaContentTaskForUser } from "@/lib/server/drama-project-service";
 import { createTextTask, getTextTask } from "@/lib/server/text-task-store";
 
 export const runtime = "nodejs";
@@ -72,6 +73,7 @@ export async function POST(request: Request) {
                 episodeId,
                 clientRequestId: requestId,
             });
+            if (phase === "content") await assignDramaContentTaskForUser(user.id, projectId, episodeId, created.id);
             await scheduleGenerationTask("text", created.id, {
                 executionPhase: "created",
                 channelId: created.config.channelId,

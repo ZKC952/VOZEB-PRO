@@ -358,39 +358,48 @@ export function DramaScriptPanel({
                         { label: "场景", value: episode.shots.length },
                     ]}
                     action={
-                        <div className="flex min-w-0 flex-col gap-2.5">
-                            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-                                <DramaSourceImport project={project} onImported={() => onStageChange("script")} />
-                                <Button
-                                    type="primary"
-                                    className="!h-8 !px-2.5 enabled:!border-violet-600 enabled:!bg-violet-600 enabled:!text-white enabled:hover:!border-violet-500 enabled:hover:!bg-violet-500 dark:enabled:!border-violet-400 dark:enabled:!bg-violet-400 dark:enabled:!text-violet-950"
-                                    size="small"
-                                    icon={<Sparkles className="size-3.5" />}
-                                    loading={analyzing}
-                                    disabled={!scriptText}
-                                    title={scriptText ? undefined : "请先填写或导入本集剧本"}
-                                    onClick={onAnalyze}
-                                >
-                                    AI 整理
+                        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+                            <DramaSourceImport project={project} onImported={() => onStageChange("script")} />
+                            <Button
+                                type="primary"
+                                className="!h-8 !px-2.5 enabled:!border-violet-600 enabled:!bg-violet-600 enabled:!text-white enabled:hover:!border-violet-500 enabled:hover:!bg-violet-500 dark:enabled:!border-violet-400 dark:enabled:!bg-violet-400 dark:enabled:!text-violet-950"
+                                size="small"
+                                icon={<Sparkles className="size-3.5" />}
+                                loading={analyzing}
+                                disabled={!scriptText}
+                                title={scriptText ? undefined : "请先填写或导入本集剧本"}
+                                onClick={onAnalyze}
+                            >
+                                AI 整理
+                            </Button>
+                            <Popover trigger="click" placement="bottomRight" styles={{ container: { padding: 12, width: 320 } }} content={<DramaEpisodeSettings project={project} episode={episode} embedded />}>
+                                <Button className="!h-8 !px-2.5" size="small" icon={<Settings2 className="size-3.5" />} aria-label="打开本集设置">
+                                    本集设置
                                 </Button>
-                                <Popover trigger="click" placement="bottomRight" styles={{ container: { padding: 12, width: 320 } }} content={<DramaEpisodeSettings project={project} episode={episode} embedded />}>
-                                    <Button className="!h-8 !px-2.5" size="small" icon={<Settings2 className="size-3.5" />} aria-label="打开本集设置">
-                                        本集设置
-                                    </Button>
-                                </Popover>
-                            </div>
-                            {lifecycle ? (
-                                <div className="w-full min-w-0 rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2.5 dark:border-sky-900/70 dark:bg-sky-950/25 sm:w-[560px]" data-drama-content-lifecycle>
-                                    <Steps
-                                        current={lifecycle.current}
-                                        responsive
-                                        size="small"
-                                        status={lifecycle.status}
-                                        items={["创建任务", "排队接管", "读取原文", "结构提取", "合并校验", "保存项目", "完成"].map((title, index) => ({ title, content: index === lifecycle.current ? lifecycle.description : undefined }))}
-                                    />
-                                </div>
-                            ) : null}
+                            </Popover>
                         </div>
+                    }
+                    below={
+                        lifecycle ? (
+                            <div
+                                className={`w-full min-w-0 rounded-lg border px-3 py-2.5 ${lifecycle.status === "error" ? "border-rose-200 bg-rose-50/70 dark:border-rose-900/70 dark:bg-rose-950/25" : "border-sky-200 bg-sky-50/70 dark:border-sky-900/70 dark:bg-sky-950/25"}`}
+                                data-drama-content-lifecycle
+                            >
+                                <Steps
+                                    className="[&_.ant-steps-item-title]:!whitespace-nowrap"
+                                    current={lifecycle.current}
+                                    responsive
+                                    size="small"
+                                    status={lifecycle.status}
+                                    items={["创建任务", "排队接管", "读取原文", "结构提取", "合并校验", "保存项目", "完成"].map((title) => ({ title }))}
+                                />
+                                <Tooltip title={lifecycle.description}>
+                                    <p className={`mt-2 truncate text-xs ${lifecycle.status === "error" ? "text-rose-600 dark:text-rose-300" : "text-sky-700 dark:text-sky-300"}`} aria-live="polite">
+                                        {lifecycle.description}
+                                    </p>
+                                </Tooltip>
+                            </div>
+                        ) : null
                     }
                 />
                 {episode.contentError ? <Alert className="mt-2.5" type="error" showIcon message="内容整理失败" description={episode.contentError} /> : null}

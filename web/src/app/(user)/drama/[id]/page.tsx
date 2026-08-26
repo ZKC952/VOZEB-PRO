@@ -29,7 +29,7 @@ import { DramaEpisodeSidebar, DramaScriptPanel, DramaWorkspaceHeader, type Drama
 
 function dramaContentLifecycleLabel(task: TextGenerationTaskLifecycle) {
     const status = task.lastUpstreamStatus;
-    if (task.status === "success") return { current: 6, description: "内容整理已完成" };
+    if (task.status === "success") return { current: 5, description: "整理结果已返回，正在保存项目" };
     if (status === "created" || task.executionPhase === "created") return { current: 1, description: "等待后台 Worker 接手" };
     if (status === "splitting") return { current: 3, description: "原文较长，正在自动拆分" };
     if (status === "analyzing_segment") return { current: 3, description: "正在逐段提取角色、场景和对白" };
@@ -75,6 +75,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const router = useRouter();
     const updateProject = useDramaStore((state) => state.updateProject);
     const updateEpisode = useDramaStore((state) => state.updateEpisode);
+    const saveProjectNow = useDramaStore((state) => state.saveProjectNow);
     const updateShot = useDramaStore((state) => state.updateShot);
     const applyContentAnalysis = useDramaStore((state) => state.applyContentAnalysis);
     const applyVisualAnalysis = useDramaStore((state) => state.applyVisualAnalysis);
@@ -91,6 +92,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const [selectedShotId, setSelectedShotId] = useState<string>();
     const [analyzing, setAnalyzing] = useState(false);
     const [contentLifecycle, setContentLifecycle] = useState<{ current: number; description: string; status?: "process" | "error" }>();
+    const [savingContent, setSavingContent] = useState(false);
     const [designing, setDesigning] = useState(false);
     const [versionsOpen, setVersionsOpen] = useState(false);
     const [versions, setVersions] = useState<DramaProjectVersion[]>([]);
@@ -104,6 +106,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     };
 
     const episode = project.episodes.find((item) => item.id === project.activeEpisodeId) || project.episodes[0];
+    const contentTaskActive = Boolean(episode.contentTaskId) && contentLifecycle?.status !== "error";
     useEffect(() => {
         const media = window.matchMedia("(min-width: 1366px)");
         const update = () => {
@@ -118,8 +121,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     }, [episode.id]);
     useEffect(() => {
         if (episode.contentTaskId) setContentLifecycle({ current: 1, description: "等待后台 Worker 接手" });
-        else if (!episode.contentError) setContentLifecycle(undefined);
-    }, [episode.contentError, episode.contentTaskId, episode.id]);
+        else if (!savingContent) setContentLifecycle(undefined);
+    }, [episode.contentTaskId, episode.id, savingContent]);
     useDramaAudioQueue(project, episode, config, updateShot);
     const analyzeScript = async () => {
         if (!episode.script.trim()) return message.warning("请先填写剧本内容");
@@ -145,6 +148,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             const taskId = payload.data?.task?.id;
             if (!response.ok || !taskId) throw new Error(payload.msg || "AI 剧本解析任务创建失败");
             updateEpisode(project.id, episode.id, { contentTaskId: taskId, contentError: undefined });
+            await saveProjectNow(project.id);
             message.success("内容整理已进入生成队列，可离开页面后再返回查看");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "AI 剧本解析失败");
@@ -157,22 +161,28 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         if (!taskId) return;
         const controller = new AbortController();
         void waitForTextGenerationTask(config, { id: taskId, model: config.textModel || config.model }, { signal: controller.signal, timeoutMs: 0, onState: (task) => setContentLifecycle(dramaContentLifecycleLabel(task)) })
-            .then((content) => {
+            .then(async (content) => {
                 if (controller.signal.aborted) return;
                 const analysis = JSON.parse(content) as DramaContentAnalysis;
+                setSavingContent(true);
                 applyContentAnalysis(project.id, episode.id, analysis);
+                await saveProjectNow(project.id);
+                if (controller.signal.aborted) return;
+                setContentLifecycle({ current: 6, description: "内容整理已完成" });
                 setStage("review");
                 message.success(`已提取 ${analysis.characters.length} 个角色、${analysis.scenes.length} 个场景和 ${analysis.shots.length} 个待审核镜头`);
             })
-            .catch((error) => {
+            .catch(async (error) => {
                 if (controller.signal.aborted) return;
                 const detail = error instanceof Error ? error.message : "AI 剧本解析失败";
                 setContentLifecycle((current) => ({ current: current?.current ?? 0, description: detail, status: "error" }));
-                updateEpisode(project.id, episode.id, { contentTaskId: undefined, contentError: detail });
+                updateEpisode(project.id, episode.id, { contentTaskId: taskId, contentError: detail });
+                await saveProjectNow(project.id).catch(() => undefined);
                 message.error(detail);
-            });
+            })
+            .finally(() => setSavingContent(false));
         return () => controller.abort();
-    }, [applyContentAnalysis, config, episode.contentTaskId, episode.id, message, project.id, updateEpisode]);
+    }, [applyContentAnalysis, config, episode.contentTaskId, episode.id, message, project.id, saveProjectNow, updateEpisode]);
     const designVisuals = async () => {
         if (!episode.shots.length) return message.warning("请先完成内容解析");
         setDesigning(true);
@@ -481,9 +491,17 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                 <DramaScriptPanel
                                     project={project}
                                     episode={episode}
-                                    analyzing={analyzing || Boolean(episode.contentTaskId)}
+                                    analyzing={analyzing || savingContent || contentTaskActive}
                                     lifecycle={
-                                        episode.contentTaskId ? contentLifecycle || { current: 1, description: "等待后台 Worker 接手" } : analyzing ? { current: 0, description: "正在创建整理任务" } : episode.contentError ? contentLifecycle : undefined
+                                        episode.contentTaskId
+                                            ? contentLifecycle || { current: 1, description: "等待后台 Worker 接手" }
+                                            : analyzing
+                                              ? { current: 0, description: "正在创建整理任务" }
+                                              : savingContent
+                                                ? contentLifecycle || { current: 5, description: "正在保存角色、场景和镜头" }
+                                                : episode.contentError
+                                                  ? contentLifecycle
+                                                  : undefined
                                     }
                                     onAnalyze={() => void analyzeScript()}
                                     onStageChange={changeStage}
@@ -575,7 +593,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                         if (episode.reviewStatus === "draft") updateEpisode(project.id, episode.id, { reviewStatus: "content_review" });
                         setStage("review");
                     }}
-                    analyzing={analyzing || Boolean(episode.contentTaskId)}
+                    analyzing={analyzing || savingContent || contentTaskActive}
                     episodeNavigatorOpen={episodeNavigatorOpen}
                 />
             ) : null}

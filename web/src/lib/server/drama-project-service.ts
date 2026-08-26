@@ -19,7 +19,7 @@ import { resolveDramaShotDuration } from "@/lib/server/drama-shot-config";
 import { listAgentRuns } from "@/lib/server/agent-run-store";
 import { CreativeEntityDeletionConflict, deleteDramaConversationAggregate } from "@/lib/server/creative-entity-deletion-store";
 import { createCreativeConversation, getCreativeConversation, listCreativeConversations, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
-import { createDramaProject, deleteDramaProject, DramaProjectStoreError, findDramaProjectBySourceHandoffId, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "@/lib/server/drama-project-store";
+import { assignDramaContentTask, createDramaProject, deleteDramaProject, DramaProjectStoreError, findDramaProjectBySourceHandoffId, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "@/lib/server/drama-project-store";
 import { createDramaProjectVersion, getDramaProjectVersion, listDramaProjectVersions } from "@/lib/server/drama-project-version-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { deleteUserMediaAssetsCascade } from "@/lib/server/user-media-deletion-service";
@@ -103,6 +103,15 @@ export async function updateDramaProjectForUser(userId: string, id: string, valu
     if (incomingUpdatedAt) project.updatedAt = new Date(incomingUpdatedAt).toISOString();
     try {
         return await updateDramaProject(userId, project, current.updatedAt);
+    } catch (error) {
+        if (error instanceof DramaProjectStoreError) throw new DramaProjectServiceError(error.message, error.status);
+        throw error;
+    }
+}
+
+export async function assignDramaContentTaskForUser(userId: string, projectId: string, episodeId: string, taskId: string) {
+    try {
+        return await assignDramaContentTask(userId, cleanText(projectId), cleanText(episodeId), cleanText(taskId));
     } catch (error) {
         if (error instanceof DramaProjectStoreError) throw new DramaProjectServiceError(error.message, error.status);
         throw error;

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     authorizedWorkerUserId: vi.fn(),
     createTextTask: vi.fn(),
     getTextTask: vi.fn(),
+    assignDramaContentTaskForUser: vi.fn(),
     scheduleGenerationTask: vi.fn(),
     runGenerationTaskRecoveryBatch: vi.fn(),
     after: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("@/lib/server/maintenance-auth", () => ({ authorizedWorkerUserId: mocks.
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId: string, _type: string, _ttl: number, _limit: number, run: () => unknown) => run()) }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
+vi.mock("@/lib/server/drama-project-service", () => ({ assignDramaContentTaskForUser: mocks.assignDramaContentTaskForUser }));
 vi.mock("@/lib/server/text-task-store", () => ({ createTextTask: mocks.createTextTask, getTextTask: mocks.getTextTask }));
 
 import { POST } from "./route";
@@ -471,7 +473,9 @@ describe("POST /api/drama/analyze", () => {
         expect(response.status).toBe(202);
         await expect(response.json()).resolves.toMatchObject({ code: 0, data: { task: { id: "visual-task-one", status: "pending", model: "planner" } }, msg: "内容整理已进入生成队列" });
         expect(mocks.createTextTask).toHaveBeenCalledWith(expect.objectContaining({ surface: "drama", projectId: "project-one", episodeId: "episode-one", clientRequestId: "drama-content-queued" }));
+        expect(mocks.assignDramaContentTaskForUser).toHaveBeenCalledWith("user-one", "project-one", "episode-one", "visual-task-one");
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("text", "visual-task-one", expect.objectContaining({ executionPhase: "created" }));
+        expect(mocks.assignDramaContentTaskForUser.mock.invocationCallOrder[0]).toBeLessThan(mocks.scheduleGenerationTask.mock.invocationCallOrder[0]);
         expect(mocks.after).toHaveBeenCalledOnce();
         expect(mocks.requestStructuredText).not.toHaveBeenCalled();
     });

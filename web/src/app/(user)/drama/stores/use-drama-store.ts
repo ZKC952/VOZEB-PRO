@@ -46,6 +46,7 @@ type DramaStore = {
             >
         >,
     ) => void;
+    saveProjectNow: (projectId: string) => Promise<void>;
     buildStoryboard: (projectId: string, episodeId: string) => void;
     updateShot: (projectId: string, episodeId: string, shotId: string, patch: Partial<DramaShot>) => void;
     queueShots: (projectId: string, episodeId: string, shotIds: string[]) => void;
@@ -276,6 +277,7 @@ export const useDramaStore = create<DramaStore>((set, get) => ({
             return { ...project, episodes: project.episodes.map((episode) => (episode.id === episodeId ? { ...episode, episodeNumber: nextNumber, title } : episode)) };
         }),
     updateEpisode: (projectId, episodeId, patch) => mutateProject(projectId, (project) => ({ ...project, episodes: project.episodes.map((episode) => (episode.id === episodeId ? { ...episode, ...patch } : episode)) })),
+    saveProjectNow: (projectId) => saveProjectNow(projectId),
     buildStoryboard: (projectId, episodeId) =>
         mutateProject(projectId, (project) => ({ ...project, episodes: project.episodes.map((episode) => (episode.id === episodeId ? { ...episode, shots: scriptToShots(episode.script, project), renderTask: undefined } : episode)) })),
     updateShot: (projectId, episodeId, shotId, patch) =>
@@ -485,6 +487,42 @@ function mutateProject(projectId: string, updater: (project: DramaProject) => Dr
         return { projects, summaries: nextProject ? upsertSummary(state.summaries, nextProject) : state.summaries };
     });
     if (nextProject) queueSave(session, nextProject);
+}
+
+async function saveProjectNow(projectId: string) {
+    const session = requireSession();
+    const key = sessionEpoch.key(session, projectId);
+    clearProjectSave(session, projectId);
+    const previous = saveQueues.get(key) || Promise.resolve();
+    const operation = previous.then(async () => {
+        assertCurrent(session);
+        clearProjectSave(session, projectId);
+        const project = useDramaStore.getState().projects.find((item) => item.id === projectId);
+        if (!project) throw new Error("短剧项目不存在");
+        try {
+            const saved = await saveDramaProject(project);
+            assertCurrent(session);
+            useDramaStore.setState((state) => ({
+                projects: state.projects.map((item) => (item.id === saved.id && item.updatedAt === project.updatedAt ? saved : item)),
+                summaries: upsertSummary(state.summaries, saved),
+                syncError: undefined,
+                saveStateByProject: state.projects.find((item) => item.id === projectId)?.updatedAt === project.updatedAt ? { ...state.saveStateByProject, [projectId]: { status: "saved", savedAt: saved.updatedAt } } : state.saveStateByProject,
+            }));
+        } catch (error) {
+            if (sessionEpoch.isCurrent(session))
+                useDramaStore.setState((state) => ({
+                    syncError: error instanceof Error ? error.message : "短剧项目保存失败",
+                    saveStateByProject: { ...state.saveStateByProject, [projectId]: { status: "error", savedAt: state.saveStateByProject[projectId]?.savedAt } },
+                }));
+            throw error;
+        }
+    });
+    saveQueues.set(key, operation);
+    try {
+        await operation;
+    } finally {
+        if (saveQueues.get(key) === operation) saveQueues.delete(key);
+    }
 }
 
 function updateShots(project: DramaProject, episodeId: string, shotIds: string[], update: (shot: DramaShot) => DramaShot) {

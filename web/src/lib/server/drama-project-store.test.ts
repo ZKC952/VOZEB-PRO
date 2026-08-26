@@ -16,7 +16,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
     }),
 }));
 
-import { createDramaProject, deleteDramaProject, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "./drama-project-store";
+import { assignDramaContentTask, createDramaProject, deleteDramaProject, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "./drama-project-store";
 
 describe("drama project file provider", () => {
     beforeEach(() => {
@@ -132,6 +132,30 @@ describe("drama project file provider", () => {
             activeEpisodeId: "episode-two",
             episodes: [{ id: "episode-one" }, { id: "episode-two", shots: [{ storyboardTaskId: "image-task", generationTaskId: "video-task" }], renderTask: { id: "render-task" } }],
         });
+    });
+
+    it("assigns a content task without replacing the project snapshot", async () => {
+        const original = project("one", "项目一");
+        original.episodes[0].contentError = "旧错误";
+        await createDramaProject("user-one", original);
+
+        const updated = await assignDramaContentTask("user-one", original.id, original.episodes[0].id, "text-task-one");
+
+        expect(updated).toMatchObject({ id: original.id, title: original.title, episodes: [{ id: "episode-one", contentTaskId: "text-task-one" }] });
+        expect(updated.episodes[0].contentError).toBeUndefined();
+        await expect(getDramaProject(original.id, "user-one")).resolves.toEqual(updated);
+    });
+
+    it("updates only the matching Episode task marker in PostgreSQL", async () => {
+        mocks.provider = "postgres";
+        const updated = { ...project("one", "项目一"), episodes: [{ ...project("one", "项目一").episodes[0], contentTaskId: "text-task-one" }] };
+        mocks.postgresQuery.mockResolvedValueOnce({ rows: [{ project_json: updated }] });
+
+        await expect(assignDramaContentTask("user-one", "one", "episode-one", "text-task-one")).resolves.toEqual(updated);
+
+        const [sql, params] = mocks.postgresQuery.mock.calls[0];
+        expect(sql).toMatch(/UPDATE drama_projects[\s\S]*contentTaskId[\s\S]*jsonb_array_elements[\s\S]*RETURNING project_json/);
+        expect(params).toEqual(["one", "user-one", "episode-one", "text-task-one", expect.any(Date), expect.any(String)]);
     });
 
     it("rejects a stale conditional update instead of overwriting a newer snapshot", async () => {
