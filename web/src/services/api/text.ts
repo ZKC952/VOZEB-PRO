@@ -66,16 +66,17 @@ export async function waitForTextGenerationTask(config: AiConfig, task: TextGene
         const response = await fetch(`/api/text-tasks/${encodeURIComponent(task.id)}`, { signal: options?.signal, cache: "no-store" });
         throwIfClientSessionExpired(response);
         const payload = (await response.json().catch(() => ({}))) as TextTaskPayload;
-        syncUserPointsFromHeaders(response.headers, resolveModelRequestConfig(config, task.model).apiSource);
+        const taskModel = payload.task?.model || task.model;
+        syncUserPointsFromHeaders(response.headers, resolveModelRequestConfig(config, taskModel).apiSource);
         if (!response.ok || !payload.task) throw new Error(payload.error || "查询文本任务失败");
         options?.onState?.(payload.task);
         if (payload.task.needsReview) throw new GenerationTaskNeedsReviewError(payload.task.reviewReason);
         if (payload.task.status === "success") {
-            await refreshUserPointsIfSystem(resolveModelRequestConfig(config, task.model).apiSource);
+            await refreshUserPointsIfSystem(resolveModelRequestConfig(config, taskModel).apiSource);
             return payload.task.result?.content || "";
         }
         if (payload.task.status === "error") {
-            await refreshUserPointsIfSystem(resolveModelRequestConfig(config, task.model).apiSource);
+            await refreshUserPointsIfSystem(resolveModelRequestConfig(config, taskModel).apiSource);
             throw new GenerationTaskTerminalError(payload.task.error || "文本生成失败");
         }
         await delay(TEXT_TASK_POLL_INTERVAL_MS, options?.signal);

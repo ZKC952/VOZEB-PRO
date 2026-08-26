@@ -149,6 +149,7 @@ export type DramaEpisode = {
     contentTaskId?: string;
     contentError?: string;
     visualTaskId?: string;
+    visualCompletedTaskId?: string;
     visualError?: string;
     shots: DramaShot[];
     renderTask?: DramaRenderTask;

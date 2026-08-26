@@ -8,6 +8,8 @@ import { useParams, useRouter } from "next/navigation";
 
 import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
 import { waitForTextGenerationTask, type TextGenerationTaskLifecycle } from "@/services/api/text";
+import { isGenerationTaskTerminalError } from "@/services/api/generation-task-state";
+import { applyDramaVisualResult, DramaVisualResultError } from "@/services/api/drama-projects";
 import { createServerVideoGenerationTask } from "@/services/api/video";
 import { syncUserPointsFromHeaders } from "@/services/api/points";
 import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
@@ -75,14 +77,16 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const router = useRouter();
     const updateProject = useDramaStore((state) => state.updateProject);
     const updateEpisode = useDramaStore((state) => state.updateEpisode);
+    const loadProject = useDramaStore((state) => state.loadProject);
+    const replaceProject = useDramaStore((state) => state.replaceProject);
     const saveProjectNow = useDramaStore((state) => state.saveProjectNow);
     const updateShot = useDramaStore((state) => state.updateShot);
     const applyContentAnalysis = useDramaStore((state) => state.applyContentAnalysis);
-    const applyVisualAnalysis = useDramaStore((state) => state.applyVisualAnalysis);
     const createVersion = useDramaStore((state) => state.createVersion);
     const listVersions = useDramaStore((state) => state.listVersions);
     const restoreVersion = useDramaStore((state) => state.restoreVersion);
     const config = useEffectiveConfig();
+    const configRef = useRef(config);
     const startingShotRef = useRef("");
     const storyboardTaskRef = useRef("");
     const mountedRef = useRef(true);
@@ -95,6 +99,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const [contentLifecycle, setContentLifecycle] = useState<{ current: number; description: string; status?: "process" | "error" }>();
     const [savingContent, setSavingContent] = useState(false);
     const [designing, setDesigning] = useState(false);
+    const [visualFailure, setVisualFailure] = useState<{ kind: "terminal" | "connection"; detail: string }>();
+    const [visualRetryNonce, setVisualRetryNonce] = useState(0);
     const [versionsOpen, setVersionsOpen] = useState(false);
     const [versions, setVersions] = useState<DramaProjectVersion[]>([]);
     const [versionsLoading, setVersionsLoading] = useState(false);
@@ -107,6 +113,9 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             mountedRef.current = false;
         };
     }, []);
+    useEffect(() => {
+        configRef.current = config;
+    }, [config]);
     const changeStage = (nextStage: DramaProjectStage) => {
         setStage(nextStage);
         setAssetsOpen(false);
@@ -114,6 +123,10 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
 
     const episode = project.episodes.find((item) => item.id === project.activeEpisodeId) || project.episodes[0];
     const contentTaskActive = Boolean(episode.contentTaskId) && contentLifecycle?.status !== "error";
+    const visualTaskActive = Boolean(episode.visualTaskId) && !visualFailure;
+    useEffect(() => {
+        setVisualFailure(undefined);
+    }, [episode.id]);
     useEffect(() => {
         const media = window.matchMedia("(min-width: 1366px)");
         const update = () => {
@@ -151,11 +164,16 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 }),
             });
             syncUserPointsFromHeaders(response.headers, "system");
-            const payload = (await response.json().catch(() => ({}))) as { data?: { task?: { id?: string } }; msg?: string };
+            const payload = (await response.json().catch(() => ({}))) as { data?: { task?: { id?: string }; projectUpdatedAt?: string }; msg?: string };
             const taskId = payload.data?.task?.id;
             if (!response.ok || !taskId) throw new Error(payload.msg || "AI 剧本解析任务创建失败");
-            updateEpisode(project.id, episode.id, { contentTaskId: taskId, contentError: undefined });
-            await saveProjectNow(project.id);
+            const currentProject = useDramaStore.getState().projects.find((item) => item.id === project.id);
+            if (currentProject)
+                replaceProject({
+                    ...currentProject,
+                    updatedAt: payload.data?.projectUpdatedAt || currentProject.updatedAt,
+                    episodes: currentProject.episodes.map((item) => (item.id === episode.id ? { ...item, contentTaskId: taskId, contentError: undefined } : item)),
+                });
             message.success("内容整理已进入生成队列，可离开页面后再返回查看");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "AI 剧本解析失败");
@@ -167,7 +185,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         const taskId = episode.contentTaskId;
         if (!taskId) return;
         const controller = new AbortController();
-        void waitForTextGenerationTask(config, { id: taskId, model: config.textModel || config.model }, { signal: controller.signal, timeoutMs: 0, onState: (task) => setContentLifecycle(dramaContentLifecycleLabel(task)) })
+        const taskConfig = configRef.current;
+        void waitForTextGenerationTask(taskConfig, { id: taskId, model: taskConfig.textModel || taskConfig.model }, { signal: controller.signal, timeoutMs: 0, onState: (task) => setContentLifecycle(dramaContentLifecycleLabel(task)) })
             .then(async (content) => {
                 if (controller.signal.aborted) return;
                 const analysis = JSON.parse(content) as DramaContentAnalysis;
@@ -190,11 +209,20 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             })
             .finally(() => setSavingContent(false));
         return () => controller.abort();
-    }, [applyContentAnalysis, config, episode.contentTaskId, episode.id, message, project.id, saveProjectNow, updateEpisode]);
+    }, [applyContentAnalysis, episode.contentTaskId, episode.id, message, project.id, saveProjectNow, updateEpisode]);
     const designVisuals = async () => {
         if (!episode.shots.length) return message.warning("请先完成内容解析");
+        if (episode.visualTaskId && visualFailure?.kind !== "terminal") {
+            setVisualFailure(undefined);
+            setVisualRetryNonce((value) => value + 1);
+            return;
+        }
         setDesigning(true);
+        let requestSent = false;
         try {
+            const saveStatus = useDramaStore.getState().saveStateByProject[project.id]?.status;
+            if (saveStatus === "saving" || saveStatus === "error") await saveProjectNow(project.id);
+            requestSent = true;
             const response = await fetch("/api/drama/analyze", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -220,13 +248,26 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 }),
             });
             syncUserPointsFromHeaders(response.headers, "system");
-            const payload = (await response.json().catch(() => ({}))) as { data?: { task?: { id?: string } }; msg?: string };
+            const payload = (await response.json().catch(() => ({}))) as { data?: { task?: { id?: string }; projectUpdatedAt?: string }; msg?: string };
             const taskId = payload.data?.task?.id;
             if (!response.ok || !taskId) throw new Error(payload.msg || "AI 视觉方案任务创建失败");
-            updateEpisode(project.id, episode.id, { reviewStatus: "approved", visualTaskId: taskId, visualError: undefined });
+            const currentProject = useDramaStore.getState().projects.find((item) => item.id === project.id);
+            if (currentProject)
+                replaceProject({
+                    ...currentProject,
+                    updatedAt: payload.data?.projectUpdatedAt || currentProject.updatedAt,
+                    episodes: currentProject.episodes.map((item) => (item.id === episode.id ? { ...item, visualTaskId: taskId, visualError: undefined } : item)),
+                });
+            setVisualFailure(undefined);
             message.success("视觉方案已进入生成队列，可离开页面后再返回查看");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "AI 视觉方案生成失败");
+            const recovered = requestSent ? await loadProject(project.id, true).catch(() => null) : null;
+            if (recovered?.episodes.find((item) => item.id === episode.id)?.visualTaskId) {
+                setVisualFailure(undefined);
+                message.info("连接曾中断，已从服务端恢复视觉任务");
+            } else {
+                message.error(error instanceof Error ? error.message : "AI 视觉方案任务创建失败");
+            }
         } finally {
             setDesigning(false);
         }
@@ -234,27 +275,31 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     useEffect(() => {
         const taskId = episode.visualTaskId;
         if (!taskId) return;
+        setVisualFailure(undefined);
         const controller = new AbortController();
-        void waitForTextGenerationTask(config, { id: taskId, model: config.textModel || config.model }, { signal: controller.signal, timeoutMs: 0 })
+        const taskConfig = configRef.current;
+        void waitForTextGenerationTask(taskConfig, { id: taskId, model: taskConfig.textModel || taskConfig.model }, { signal: controller.signal, timeoutMs: 0 })
             .then(async (content) => {
                 if (controller.signal.aborted) return;
                 const analysis = JSON.parse(content) as DramaVisualAnalysis;
+                const result = await applyDramaVisualResult(project.id, episode.id, taskId, analysis);
+                if (controller.signal.aborted) return;
                 const currentProject = useDramaStore.getState().projects.find((item) => item.id === project.id);
                 if (!currentProject) return;
-                await createVersion({ ...currentProject, episodes: currentProject.episodes.map((item) => (item.id === episode.id ? { ...item, visualTaskId: undefined, visualError: undefined } : item)) }, "视觉方案生成前");
-                if (controller.signal.aborted) return;
-                applyVisualAnalysis(project.id, episode.id, analysis);
+                replaceProject({ ...currentProject, updatedAt: result.projectUpdatedAt, episodes: currentProject.episodes.map((item) => (item.id === episode.id ? result.episode : item)) });
+                setVisualFailure(undefined);
                 setStage("storyboard");
                 message.success("已按审核内容生成视觉方案");
             })
             .catch((error) => {
                 if (controller.signal.aborted) return;
                 const detail = error instanceof Error ? error.message : "AI 视觉方案生成失败";
-                updateEpisode(project.id, episode.id, { visualTaskId: undefined, visualError: detail });
-                message.error(detail);
+                const terminal = isGenerationTaskTerminalError(error) || error instanceof SyntaxError || (error instanceof DramaVisualResultError && error.status >= 400 && error.status < 500);
+                setVisualFailure({ kind: terminal ? "terminal" : "connection", detail });
+                message.error(terminal ? detail : `视觉任务仍保留，可检查状态：${detail}`);
             });
         return () => controller.abort();
-    }, [applyVisualAnalysis, config, createVersion, episode.id, episode.visualTaskId, message, project.id, updateEpisode]);
+    }, [episode.id, episode.visualTaskId, message, project.id, replaceProject, visualRetryNonce]);
     const openVersions = async () => {
         setVersionsOpen(true);
         setVersionsLoading(true);
@@ -518,7 +563,9 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                 />
                             ) : null}
 
-                            {!assetsOpen && stage === "review" ? <DramaReviewPanel project={project} episode={episode} designing={designing} onDesignVisuals={() => void designVisuals()} onStageChange={changeStage} /> : null}
+                            {!assetsOpen && stage === "review" ? (
+                                <DramaReviewPanel project={project} episode={episode} designing={designing || visualTaskActive} visualFailure={visualFailure} onDesignVisuals={() => void designVisuals()} onStageChange={changeStage} />
+                            ) : null}
 
                             {!assetsOpen && stage === "storyboard" ? (
                                 <div>

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     createTextTask: vi.fn(),
     getTextTask: vi.fn(),
     assignDramaContentTaskForUser: vi.fn(),
+    assignDramaVisualTaskForUser: vi.fn(),
     scheduleGenerationTask: vi.fn(),
     runGenerationTaskRecoveryBatch: vi.fn(),
     after: vi.fn(),
@@ -27,7 +28,7 @@ vi.mock("@/lib/server/maintenance-auth", () => ({ authorizedWorkerUserId: mocks.
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId: string, _type: string, _ttl: number, _limit: number, run: () => unknown) => run()) }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
-vi.mock("@/lib/server/drama-project-service", () => ({ assignDramaContentTaskForUser: mocks.assignDramaContentTaskForUser }));
+vi.mock("@/lib/server/drama-project-service", () => ({ assignDramaContentTaskForUser: mocks.assignDramaContentTaskForUser, assignDramaVisualTaskForUser: mocks.assignDramaVisualTaskForUser }));
 vi.mock("@/lib/server/text-task-store", () => ({ createTextTask: mocks.createTextTask, getTextTask: mocks.getTextTask }));
 
 import { POST } from "./route";
@@ -38,6 +39,8 @@ describe("POST /api/drama/analyze", () => {
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
         mocks.authorizedWorkerUserId.mockReturnValue("user-one");
         mocks.checkRateLimit.mockResolvedValue({ allowed: true });
+        mocks.assignDramaContentTaskForUser.mockResolvedValue({ updatedAt: "2026-08-26T06:00:00.000Z" });
+        mocks.assignDramaVisualTaskForUser.mockResolvedValue({ updatedAt: "2026-08-26T06:00:00.000Z" });
         mocks.getAuthSettings.mockResolvedValue({
             defaultModels: { textModel: "planner", videoModel: "video-planner" },
             generationDefaults: { videoSeconds: 5 },
@@ -455,7 +458,9 @@ describe("POST /api/drama/analyze", () => {
         expect(response.status).toBe(202);
         await expect(response.json()).resolves.toMatchObject({ code: 0, data: { task: { id: "visual-task-one", status: "pending", model: "planner" } } });
         expect(mocks.createTextTask).toHaveBeenCalledWith(expect.objectContaining({ surface: "drama", projectId: "project-one", episodeId: "episode-one", clientRequestId: "drama-visual-queued" }));
+        expect(mocks.assignDramaVisualTaskForUser).toHaveBeenCalledWith("user-one", "project-one", "episode-one", "visual-task-one");
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("text", "visual-task-one", expect.objectContaining({ executionPhase: "created" }));
+        expect(mocks.assignDramaVisualTaskForUser.mock.invocationCallOrder[0]).toBeLessThan(mocks.scheduleGenerationTask.mock.invocationCallOrder[0]);
         expect(mocks.after).toHaveBeenCalledOnce();
         expect(mocks.requestStructuredText).not.toHaveBeenCalled();
     });

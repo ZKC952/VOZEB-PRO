@@ -28,6 +28,10 @@ describe("drama source import workspace", () => {
         expect(editor).toContain("await saveProjectNow(project.id)");
         expect(editor).toContain('contentLifecycle?.status !== "error"');
         expect(editor).toContain("{ contentTaskId: taskId, contentError: detail }");
-        expect(editor).toContain("waitForTextGenerationTask(config");
+        expect(editor).toContain("waitForTextGenerationTask(taskConfig");
+        expect(editor).toContain("applyDramaVisualResult(project.id, episode.id, taskId, analysis)");
+        expect(editor).not.toContain('{ reviewStatus: "approved", visualTaskId: taskId');
+        expect(editor).not.toContain("{ visualTaskId: undefined, visualError: detail }");
+        expect(editor).toContain('setVisualFailure({ kind: terminal ? "terminal" : "connection", detail })');
     });
 });

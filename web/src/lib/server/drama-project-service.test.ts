@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => {
         listDramaProjectSummaries: vi.fn(),
         updateDramaProject: vi.fn(),
         assignDramaContentTask: vi.fn(),
+        assignDramaVisualTask: vi.fn(),
+        applyDramaVisualResult: vi.fn(),
         createDramaProjectVersion: vi.fn(),
         getDramaProjectVersion: vi.fn(),
         listDramaProjectVersions: vi.fn(),
@@ -53,6 +55,8 @@ vi.mock("@/lib/server/drama-project-store", () => ({
     listDramaProjectSummaries: mocks.listDramaProjectSummaries,
     updateDramaProject: mocks.updateDramaProject,
     assignDramaContentTask: mocks.assignDramaContentTask,
+    assignDramaVisualTask: mocks.assignDramaVisualTask,
+    applyDramaVisualResult: mocks.applyDramaVisualResult,
 }));
 vi.mock("@/lib/server/drama-project-version-store", () => ({
     createDramaProjectVersion: mocks.createDramaProjectVersion,
@@ -61,7 +65,17 @@ vi.mock("@/lib/server/drama-project-version-store", () => ({
 }));
 vi.mock("@/lib/server/user-media-deletion-service", () => ({ deleteUserMediaAssetsCascade: mocks.deleteUserMediaAssetsCascade }));
 
-import { createDramaProjectForUser, createDramaProjectVersionForUser, deleteDramaAgentConversationForUser, deleteDramaProjectForUser, DramaProjectServiceError, restoreDramaProjectVersionForUser, updateDramaProjectForUser } from "./drama-project-service";
+import {
+    applyDramaVisualResultForUser,
+    assignDramaVisualTaskForUser,
+    createDramaProjectForUser,
+    createDramaProjectVersionForUser,
+    deleteDramaAgentConversationForUser,
+    deleteDramaProjectForUser,
+    DramaProjectServiceError,
+    restoreDramaProjectVersionForUser,
+    updateDramaProjectForUser,
+} from "./drama-project-service";
 import { DramaProjectStoreError } from "./drama-project-store";
 
 describe("drama project service updates", () => {
@@ -77,6 +91,56 @@ describe("drama project service updates", () => {
         mocks.findDramaProjectBySourceHandoffId.mockResolvedValue(null);
         mocks.listDramaProjectSummaries.mockResolvedValue([]);
         mocks.createDramaProjectVersion.mockResolvedValue({ id: "version-new", projectId: "drama-one", version: 2, reason: "恢复前自动快照", createdAt: new Date().toISOString() });
+        mocks.assignDramaVisualTask.mockResolvedValue({ updatedAt: "2026-08-26T06:00:00.000Z" });
+    });
+
+    it("binds and applies a complete visual result through the server project state", async () => {
+        const current = project("2026-07-19T08:00:02.000Z", "项目");
+        current.episodes[0].visualTaskId = "visual-task-one";
+        current.episodes[0].shots = [
+            {
+                id: "shot-one",
+                order: 1,
+                title: "镜头一",
+                description: "描述",
+                sourceText: "原文",
+                shotBoundary: "边界",
+                dialogue: "对白",
+                narration: "",
+                utterances: [],
+                imagePrompt: "",
+                videoPrompt: "",
+                cameraMotion: "",
+                duration: 5,
+                characterIds: [],
+                propIds: [],
+                clueIds: [],
+            },
+        ];
+        mocks.getDramaProject.mockResolvedValue(current);
+        mocks.applyDramaVisualResult.mockResolvedValue({ project: current, version: { id: "version-one" } });
+
+        await expect(assignDramaVisualTaskForUser("user-one", current.id, "episode-one", "visual-task-one")).resolves.toMatchObject({ updatedAt: "2026-08-26T06:00:00.000Z" });
+        await expect(
+            applyDramaVisualResultForUser("user-one", current.id, "episode-one", {
+                taskId: "visual-task-one",
+                analysis: {
+                    shots: [
+                        {
+                            shotId: "shot-one",
+                            imagePrompt: "图片提示词",
+                            videoPrompt: "视频提示词",
+                            cameraMotion: "推进",
+                            startFramePrompt: "起始",
+                            endFramePrompt: "结束",
+                            negativePrompt: "模糊",
+                            continuity: {},
+                        },
+                    ],
+                },
+            }),
+        ).resolves.toMatchObject({ version: { id: "version-one" } });
+        expect(mocks.applyDramaVisualResult).toHaveBeenCalledWith("user-one", current.id, "episode-one", "visual-task-one", expect.objectContaining({ shots: [expect.objectContaining({ shotId: "shot-one" })] }));
     });
 
     it("does not let an older client snapshot overwrite the current project", async () => {

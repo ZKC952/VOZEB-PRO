@@ -42,7 +42,22 @@ type DramaStore = {
         patch: Partial<
             Pick<
                 DramaEpisode,
-                "episodeNumber" | "title" | "script" | "scriptRichContent" | "outline" | "hook" | "nextPreview" | "sourceRange" | "reviewStatus" | "contentTaskId" | "contentError" | "visualTaskId" | "visualError" | "renderTask" | "visualReview"
+                | "episodeNumber"
+                | "title"
+                | "script"
+                | "scriptRichContent"
+                | "outline"
+                | "hook"
+                | "nextPreview"
+                | "sourceRange"
+                | "reviewStatus"
+                | "contentTaskId"
+                | "contentError"
+                | "visualTaskId"
+                | "visualCompletedTaskId"
+                | "visualError"
+                | "renderTask"
+                | "visualReview"
             >
         >,
     ) => void;

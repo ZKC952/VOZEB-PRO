@@ -15,11 +15,23 @@ import {
 } from "@/lib/drama-project-contract";
 import { dramaRichContentToPlainText, normalizeDramaScriptRichContent } from "@/lib/drama-script-rich-content";
 import { normalizeDramaImageSize } from "@/lib/drama-image-size";
+import { normalizeDramaVisualAnalysis } from "@/lib/server/drama-analysis";
 import { resolveDramaShotDuration } from "@/lib/server/drama-shot-config";
 import { listAgentRuns } from "@/lib/server/agent-run-store";
 import { CreativeEntityDeletionConflict, deleteDramaConversationAggregate } from "@/lib/server/creative-entity-deletion-store";
 import { createCreativeConversation, getCreativeConversation, listCreativeConversations, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
-import { assignDramaContentTask, createDramaProject, deleteDramaProject, DramaProjectStoreError, findDramaProjectBySourceHandoffId, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "@/lib/server/drama-project-store";
+import {
+    applyDramaVisualResult,
+    assignDramaContentTask,
+    assignDramaVisualTask,
+    createDramaProject,
+    deleteDramaProject,
+    DramaProjectStoreError,
+    findDramaProjectBySourceHandoffId,
+    getDramaProject,
+    listDramaProjectSummaries,
+    updateDramaProject,
+} from "@/lib/server/drama-project-store";
 import { createDramaProjectVersion, getDramaProjectVersion, listDramaProjectVersions } from "@/lib/server/drama-project-version-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { deleteUserMediaAssetsCascade } from "@/lib/server/user-media-deletion-service";
@@ -112,6 +124,37 @@ export async function updateDramaProjectForUser(userId: string, id: string, valu
 export async function assignDramaContentTaskForUser(userId: string, projectId: string, episodeId: string, taskId: string) {
     try {
         return await assignDramaContentTask(userId, cleanText(projectId), cleanText(episodeId), cleanText(taskId));
+    } catch (error) {
+        if (error instanceof DramaProjectStoreError) throw new DramaProjectServiceError(error.message, error.status);
+        throw error;
+    }
+}
+
+export async function assignDramaVisualTaskForUser(userId: string, projectId: string, episodeId: string, taskId: string) {
+    try {
+        return await assignDramaVisualTask(userId, cleanText(projectId), cleanText(episodeId), cleanText(taskId));
+    } catch (error) {
+        if (error instanceof DramaProjectStoreError) throw new DramaProjectServiceError(error.message, error.status);
+        throw error;
+    }
+}
+
+export async function applyDramaVisualResultForUser(userId: string, projectIdValue: string, episodeIdValue: string, value: unknown) {
+    const projectId = cleanText(projectIdValue);
+    const episodeId = cleanText(episodeIdValue);
+    const input = object(value);
+    const taskId = cleanText(input.taskId);
+    if (!taskId) throw new DramaProjectServiceError("视觉任务标识无效", 400);
+    const current = await getDramaProjectForUser(userId, projectId);
+    const episode = current.episodes.find((item) => item.id === episodeId);
+    if (!episode) throw new DramaProjectServiceError("短剧剧集不存在", 404);
+    const analysis = normalizeDramaVisualAnalysis(
+        input.analysis,
+        episode.shots.map((shot) => shot.id),
+    );
+    if (analysis.shots.length !== episode.shots.length) throw new DramaProjectServiceError("视觉方案镜头不完整，未保存任何结果", 422);
+    try {
+        return await applyDramaVisualResult(userId, projectId, episodeId, taskId, analysis);
     } catch (error) {
         if (error instanceof DramaProjectStoreError) throw new DramaProjectServiceError(error.message, error.status);
         throw error;
@@ -270,6 +313,7 @@ function normalizeEpisode(value: unknown, index: number): DramaEpisode | null {
         contentTaskId: optionalText(input.contentTaskId),
         contentError: optionalText(input.contentError),
         visualTaskId: optionalText(input.visualTaskId),
+        visualCompletedTaskId: optionalText(input.visualCompletedTaskId),
         visualError: optionalText(input.visualError),
         shots: array(input.shots).map(normalizeShot),
         renderTask,

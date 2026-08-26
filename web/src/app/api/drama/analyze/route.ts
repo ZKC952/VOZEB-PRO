@@ -19,7 +19,7 @@ import { isStructuredTextFailure, rankTextPlanningCandidates, requestStructuredT
 import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody, type NormalizedDramaVisualInput } from "@/lib/server/drama-analysis-input";
 import { dramaShotDurationInstruction, resolveDramaVideoDurationPolicy } from "@/lib/server/drama-shot-config";
 import { analyzeDramaVisualBatches } from "@/lib/server/drama-visual-analysis-runtime";
-import { assignDramaContentTaskForUser } from "@/lib/server/drama-project-service";
+import { assignDramaContentTaskForUser, assignDramaVisualTaskForUser } from "@/lib/server/drama-project-service";
 import { createTextTask, getTextTask } from "@/lib/server/text-task-store";
 
 export const runtime = "nodejs";
@@ -60,6 +60,7 @@ export async function POST(request: Request) {
         const projectId = dramaAnalysisText(body.projectId);
         const episodeId = phase === "visual" ? visualInput!.payload.episode.id : dramaAnalysisText(body.episodeId);
         if (!projectId || !episodeId) return NextResponse.json({ code: 400, data: null, msg: "短剧项目或剧集标识无效" }, { status: 400 });
+        let projectUpdatedAt = "";
         const task = await withGenerationConcurrencyLimit(user.id, "text", 5 * 60 * 1000, settings.generationConcurrency.text, async () => {
             const configs = candidates.map((candidate) => ({ ...toSystemGenerationChannel(candidate), channelId: candidate.channelId, systemPrompt: "" }));
             const created = await createTextTask({
@@ -73,7 +74,8 @@ export async function POST(request: Request) {
                 episodeId,
                 clientRequestId: requestId,
             });
-            if (phase === "content") await assignDramaContentTaskForUser(user.id, projectId, episodeId, created.id);
+            const assigned = await (phase === "visual" ? assignDramaVisualTaskForUser : assignDramaContentTaskForUser)(user.id, projectId, episodeId, created.id);
+            projectUpdatedAt = assigned.updatedAt;
             await scheduleGenerationTask("text", created.id, {
                 executionPhase: "created",
                 channelId: created.config.channelId,
@@ -87,7 +89,7 @@ export async function POST(request: Request) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = request.headers.get("cookie") || "";
         after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));
-        return NextResponse.json({ code: 0, data: { task: { id: task.id, status: task.status, model } }, msg: phase === "visual" ? "视觉方案已进入生成队列" : "内容整理已进入生成队列" }, { status: 202 });
+        return NextResponse.json({ code: 0, data: { task: { id: task.id, status: task.status, model }, projectUpdatedAt }, msg: phase === "visual" ? "视觉方案已进入生成队列" : "内容整理已进入生成队列" }, { status: 202 });
     }
     const requestedVideoModel = dramaAnalysisText(body.videoModel);
     const defaultVideoModel = settings.defaultModels.videoModel;
