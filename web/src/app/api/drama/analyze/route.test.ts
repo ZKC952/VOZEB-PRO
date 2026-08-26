@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     requestStructuredText: vi.fn(),
     authorizedWorkerUserId: vi.fn(),
     createTextTask: vi.fn(),
+    getTextTask: vi.fn(),
     scheduleGenerationTask: vi.fn(),
     runGenerationTaskRecoveryBatch: vi.fn(),
     after: vi.fn(),
@@ -25,7 +26,7 @@ vi.mock("@/lib/server/maintenance-auth", () => ({ authorizedWorkerUserId: mocks.
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId: string, _type: string, _ttl: number, _limit: number, run: () => unknown) => run()) }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
-vi.mock("@/lib/server/text-task-store", () => ({ createTextTask: mocks.createTextTask }));
+vi.mock("@/lib/server/text-task-store", () => ({ createTextTask: mocks.createTextTask, getTextTask: mocks.getTextTask }));
 
 import { POST } from "./route";
 
@@ -107,6 +108,7 @@ describe("POST /api/drama/analyze", () => {
             createdAt: 1,
             updatedAt: 1,
         });
+        mocks.getTextTask.mockResolvedValue(null);
     });
 
     it("uses one strict JSON request for drama analysis", async () => {
@@ -152,6 +154,22 @@ describe("POST /api/drama/analyze", () => {
         expect(fallbackBillingKey).not.toBe(toolBillingKey);
         expect(input.messages?.[0]?.content).toContain("5、8、10、15 秒");
         expect(input.messages?.[0]?.content).toContain("不能删句");
+    });
+
+    it("persists content lifecycle progress for the authenticated worker task", async () => {
+        mocks.getTextTask.mockResolvedValue({ id: "text-progress", userId: "user-one", dramaAnalysis: { body: { requestId: "drama-progress-one" } } });
+
+        const response = await POST(
+            new Request("http://localhost/api/drama/analyze", {
+                method: "POST",
+                headers: { "content-type": "application/json", "x-vozeb-pro-generation-task-id": "text-progress" },
+                body: JSON.stringify({ requestId: "drama-progress-one", phase: "content", script: "灰黑色风暴扫过废墟。" }),
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("text", "text-progress", { executionPhase: "submitting", lastUpstreamStatus: "analyzing" });
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("text", "text-progress", { executionPhase: "submitting", lastUpstreamStatus: "validating" });
     });
 
     it("unwraps a Responses-compatible data wrapper before validating drama fields", async () => {

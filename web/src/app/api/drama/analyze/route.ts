@@ -19,7 +19,7 @@ import { isStructuredTextFailure, rankTextPlanningCandidates, requestStructuredT
 import { dramaAnalysisText, normalizeDramaVisualInput, type DramaAnalyzeBody, type NormalizedDramaVisualInput } from "@/lib/server/drama-analysis-input";
 import { dramaShotDurationInstruction, resolveDramaVideoDurationPolicy } from "@/lib/server/drama-shot-config";
 import { analyzeDramaVisualBatches } from "@/lib/server/drama-visual-analysis-runtime";
-import { createTextTask } from "@/lib/server/text-task-store";
+import { createTextTask, getTextTask } from "@/lib/server/text-task-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 2400;
@@ -39,6 +39,12 @@ export async function POST(request: Request) {
     const requestId = dramaAnalysisText(body.requestId);
     if (!requestId || requestId.length > 200) return NextResponse.json({ code: 400, data: null, msg: "剧本分析请求标识无效" }, { status: 400 });
     const phase = body.phase === "visual" ? "visual" : "content";
+    const progressTaskId = workerExecution ? dramaAnalysisText(request.headers.get("x-vozeb-pro-generation-task-id")) : "";
+    const progressTask = progressTaskId ? await getTextTask(progressTaskId) : null;
+    const reportProgress =
+        progressTask?.userId === user.id && progressTask.dramaAnalysis?.body.requestId === requestId
+            ? async (lastUpstreamStatus: string) => scheduleGenerationTask("text", progressTask.id, { executionPhase: "submitting", lastUpstreamStatus })
+            : async () => undefined;
     const script = dramaAnalysisText(body.script);
     if (phase === "content" && !script) return NextResponse.json({ code: 400, data: null, msg: "请先填写剧本" }, { status: 400 });
 
@@ -90,6 +96,7 @@ export async function POST(request: Request) {
 
     let refundedPointsRemaining: number | undefined;
     try {
+        await reportProgress(phase === "visual" ? "designing_visuals" : "analyzing");
         const tool = phase === "visual" ? dramaVisualTool : dramaContentTool;
         const input = phase === "visual" ? visualInput!.payload : { script, summary: dramaAnalysisText(body.summary) };
         const schemaInstruction = `即使渠道没有传递工具定义，也必须只返回符合以下 JSON Schema 的对象，不能返回输入对象，不能把 script 或 summary 作为顶层字段：${JSON.stringify(tool.parameters)}`;
@@ -155,7 +162,9 @@ export async function POST(request: Request) {
                     onRefund: (pointsBalance) => {
                         if (typeof pointsBalance === "number") refundedPointsRemaining = pointsBalance;
                     },
+                    onProgress: reportProgress,
                 });
+                await reportProgress("validating");
                 const response = NextResponse.json({ code: 0, data: result.data, msg: "内容结构待审核" });
                 const pointsRemaining = result.calls
                     .map((call) => call.pointsRemaining)
@@ -253,6 +262,7 @@ async function analyzeDramaContentCandidate(input: {
     messagesFor: (batchInput: unknown) => Array<{ role: string; content: string }>;
     signal: AbortSignal;
     onRefund: (pointsBalance: unknown) => void;
+    onProgress: (status: string) => Promise<unknown>;
 }) {
     const calls: DramaContentCall[] = [];
     try {
@@ -270,6 +280,7 @@ async function analyzeDramaContentCandidate(input: {
 }
 
 async function analyzeDramaScriptSegment(input: Parameters<typeof analyzeDramaContentCandidate>[0], script: string, segmentKey: string, calls: DramaContentCall[]): Promise<ReturnType<typeof normalizeDramaContentAnalysis>> {
+    if (segmentKey !== "full") await input.onProgress("analyzing_segment");
     try {
         const call = await requestFunctionCall(
             input.origin,
@@ -298,8 +309,10 @@ async function analyzeDramaScriptSegment(input: Parameters<typeof analyzeDramaCo
     } catch (error) {
         const split = splitDramaScriptAtBoundary(script);
         if (!split || !isAdaptiveContentError(error)) throw error;
+        await input.onProgress("splitting");
         const left = await analyzeDramaScriptSegment(input, split[0], `${segmentKey}.0`, calls);
         const right = await analyzeDramaScriptSegment(input, split[1], `${segmentKey}.1`, calls);
+        await input.onProgress("merging");
         return mergeDramaContentAnalyses([left, right]);
     }
 }

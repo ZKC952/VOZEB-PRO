@@ -6,6 +6,9 @@ import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 
 type RequestOptions = { signal?: AbortSignal; timeoutMs?: number };
 
+export type TextGenerationTaskLifecycle = GenerationTaskExecutionState & Pick<TextGenerationTask, "status">;
+type WaitTextTaskOptions = RequestOptions & { onState?: (task: TextGenerationTaskLifecycle) => void };
+
 export type TextGenerationTask = {
     id: string;
     status?: "pending" | "running" | "success" | "error";
@@ -55,7 +58,7 @@ export async function recoverTextGenerationTask(taskId: string, options?: Reques
     return payload.task;
 }
 
-export async function waitForTextGenerationTask(config: AiConfig, task: TextGenerationTask, options?: RequestOptions) {
+export async function waitForTextGenerationTask(config: AiConfig, task: TextGenerationTask, options?: WaitTextTaskOptions) {
     const startedAt = Date.now();
     const timeoutMs = options?.timeoutMs ?? TEXT_TASK_TIMEOUT_MS;
     for (;;) {
@@ -65,6 +68,7 @@ export async function waitForTextGenerationTask(config: AiConfig, task: TextGene
         const payload = (await response.json().catch(() => ({}))) as TextTaskPayload;
         syncUserPointsFromHeaders(response.headers, resolveModelRequestConfig(config, task.model).apiSource);
         if (!response.ok || !payload.task) throw new Error(payload.error || "查询文本任务失败");
+        options?.onState?.(payload.task);
         if (payload.task.needsReview) throw new GenerationTaskNeedsReviewError(payload.task.reviewReason);
         if (payload.task.status === "success") {
             await refreshUserPointsIfSystem(resolveModelRequestConfig(config, task.model).apiSource);

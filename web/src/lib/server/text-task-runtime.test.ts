@@ -118,9 +118,13 @@ describe("text task runtime recovery", () => {
 
         await expect(runTextTaskStep(state, "http://internal", "session=test")).resolves.toEqual({ state: "completed" });
 
-        expect(fetchMock).toHaveBeenCalledWith("http://internal/api/drama/analyze", expect.objectContaining({ method: "POST", headers: expect.objectContaining({ authorization: `Bearer ${token}`, "x-vozeb-pro-worker-user-id": "user-one" }) }));
+        expect(fetchMock).toHaveBeenCalledWith(
+            "http://internal/api/drama/analyze",
+            expect.objectContaining({ method: "POST", headers: expect.objectContaining({ authorization: `Bearer ${token}`, "x-vozeb-pro-worker-user-id": "user-one", "x-vozeb-pro-generation-task-id": state.id }) }),
+        );
         expect(state.status).toBe("success");
         expect(JSON.parse(state.result?.content || "{}")).toMatchObject({ episode: { outline: "大纲" } });
+        expect(mocks.schedule).toHaveBeenCalledWith("text", state.id, { executionPhase: "persisting", lastUpstreamStatus: "persisting" });
     });
 
     it("persists an asynchronous task ID and queries only one step per worker run", async () => {

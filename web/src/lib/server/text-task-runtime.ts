@@ -121,12 +121,13 @@ async function runDramaAnalysisTextTask(task: TextTask, origin: string): Promise
         if (!workerHeaders) throw new Error("生成任务 Worker 鉴权不可用");
         const response = await fetchInternalApi(`${origin}/api/drama/analyze`, {
             method: "POST",
-            headers: { "content-type": "application/json", ...workerHeaders },
+            headers: { "content-type": "application/json", "x-vozeb-pro-generation-task-id": task.id, ...workerHeaders },
             body: JSON.stringify(analysis.body),
             cache: "no-store",
         });
         const payload = (await response.json().catch(() => null)) as { data?: unknown; msg?: string } | null;
         if (!response.ok || !payload?.data) return failTextTask(task, payload?.msg || `AI ${label}失败`, task.attempts || []);
+        await scheduleGenerationTask("text", task.id, { executionPhase: "persisting", lastUpstreamStatus: "persisting" });
         const remaining = Number(response.headers.get("x-vozeb-pro-points-remaining"));
         return completeTextTask(task, JSON.stringify(payload.data), { pointsRemaining: Number.isFinite(remaining) ? remaining : undefined }, task.attempts || []);
     } catch (error) {

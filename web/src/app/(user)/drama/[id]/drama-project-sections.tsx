@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Alert, App, Button, Drawer, Input, Popover, Tooltip } from "antd";
+import { Alert, App, Button, Drawer, Input, Popover, Steps, Tooltip } from "antd";
 import { ArrowLeft, Bot, Boxes, ChevronDown, ChevronRight, History, PanelLeft, Plus, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -327,6 +327,7 @@ export function DramaScriptPanel({
     project,
     episode,
     analyzing,
+    lifecycle,
     onAnalyze,
     onStageChange,
     selectedShotId,
@@ -335,6 +336,7 @@ export function DramaScriptPanel({
     project: DramaProject;
     episode: DramaEpisode;
     analyzing: boolean;
+    lifecycle?: { current: number; description: string; status?: "process" | "error" };
     onAnalyze: () => void;
     onStageChange: (stage: DramaProjectStage) => void;
     selectedShotId?: string;
@@ -349,32 +351,45 @@ export function DramaScriptPanel({
                     step="01"
                     title="剧本编辑"
                     description="编辑或导入本集剧本，整理后进入内容审核。"
-                    status={scriptText ? (episode.shots.length ? "已整理" : "待整理") : "待编辑"}
-                    tone={scriptText ? (episode.shots.length ? "ready" : "neutral") : "attention"}
+                    status={lifecycle?.status === "error" ? "整理失败" : lifecycle ? "整理进行中" : scriptText ? (episode.shots.length ? "已整理" : "待整理") : "待编辑"}
+                    tone={lifecycle?.status === "error" ? "attention" : lifecycle ? "running" : scriptText ? (episode.shots.length ? "ready" : "neutral") : "attention"}
                     metrics={[
                         { label: "字数", value: scriptText.length },
                         { label: "场景", value: episode.shots.length },
                     ]}
                     action={
-                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                            <DramaSourceImport project={project} onImported={() => onStageChange("script")} />
-                            <Button
-                                type="primary"
-                                className="!h-8 !px-2.5 enabled:!border-violet-600 enabled:!bg-violet-600 enabled:!text-white enabled:hover:!border-violet-500 enabled:hover:!bg-violet-500 dark:enabled:!border-violet-400 dark:enabled:!bg-violet-400 dark:enabled:!text-violet-950"
-                                size="small"
-                                icon={<Sparkles className="size-3.5" />}
-                                loading={analyzing}
-                                disabled={!scriptText}
-                                title={scriptText ? undefined : "请先填写或导入本集剧本"}
-                                onClick={onAnalyze}
-                            >
-                                AI 整理
-                            </Button>
-                            <Popover trigger="click" placement="bottomRight" styles={{ container: { padding: 12, width: 320 } }} content={<DramaEpisodeSettings project={project} episode={episode} embedded />}>
-                                <Button className="!h-8 !px-2.5" size="small" icon={<Settings2 className="size-3.5" />} aria-label="打开本集设置">
-                                    本集设置
+                        <div className="flex min-w-0 flex-col gap-2.5">
+                            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+                                <DramaSourceImport project={project} onImported={() => onStageChange("script")} />
+                                <Button
+                                    type="primary"
+                                    className="!h-8 !px-2.5 enabled:!border-violet-600 enabled:!bg-violet-600 enabled:!text-white enabled:hover:!border-violet-500 enabled:hover:!bg-violet-500 dark:enabled:!border-violet-400 dark:enabled:!bg-violet-400 dark:enabled:!text-violet-950"
+                                    size="small"
+                                    icon={<Sparkles className="size-3.5" />}
+                                    loading={analyzing}
+                                    disabled={!scriptText}
+                                    title={scriptText ? undefined : "请先填写或导入本集剧本"}
+                                    onClick={onAnalyze}
+                                >
+                                    AI 整理
                                 </Button>
-                            </Popover>
+                                <Popover trigger="click" placement="bottomRight" styles={{ container: { padding: 12, width: 320 } }} content={<DramaEpisodeSettings project={project} episode={episode} embedded />}>
+                                    <Button className="!h-8 !px-2.5" size="small" icon={<Settings2 className="size-3.5" />} aria-label="打开本集设置">
+                                        本集设置
+                                    </Button>
+                                </Popover>
+                            </div>
+                            {lifecycle ? (
+                                <div className="w-full min-w-0 rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2.5 dark:border-sky-900/70 dark:bg-sky-950/25 sm:w-[560px]" data-drama-content-lifecycle>
+                                    <Steps
+                                        current={lifecycle.current}
+                                        responsive
+                                        size="small"
+                                        status={lifecycle.status}
+                                        items={["创建任务", "排队接管", "读取原文", "结构提取", "合并校验", "保存项目", "完成"].map((title, index) => ({ title, content: index === lifecycle.current ? lifecycle.description : undefined }))}
+                                    />
+                                </div>
+                            ) : null}
                         </div>
                     }
                 />

@@ -7,7 +7,7 @@ import { nanoid } from "nanoid";
 import { useParams, useRouter } from "next/navigation";
 
 import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
-import { waitForTextGenerationTask } from "@/services/api/text";
+import { waitForTextGenerationTask, type TextGenerationTaskLifecycle } from "@/services/api/text";
 import { createServerVideoGenerationTask } from "@/services/api/video";
 import { syncUserPointsFromHeaders } from "@/services/api/points";
 import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
@@ -26,6 +26,18 @@ import { DramaVersionModal } from "./drama-project-modals";
 import { dramaGenerationSize, estimateTaskPoints, referenceImage, shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
 import { useGenerationCapacityRetry } from "./use-generation-capacity-retry";
 import { DramaEpisodeSidebar, DramaScriptPanel, DramaWorkspaceHeader, type DramaProjectStage } from "./drama-project-sections";
+
+function dramaContentLifecycleLabel(task: TextGenerationTaskLifecycle) {
+    const status = task.lastUpstreamStatus;
+    if (task.status === "success") return { current: 6, description: "内容整理已完成" };
+    if (status === "created" || task.executionPhase === "created") return { current: 1, description: "等待后台 Worker 接手" };
+    if (status === "splitting") return { current: 3, description: "原文较长，正在自动拆分" };
+    if (status === "analyzing_segment") return { current: 3, description: "正在逐段提取角色、场景和对白" };
+    if (status === "merging") return { current: 4, description: "正在合并分段整理结果" };
+    if (status === "validating") return { current: 4, description: "正在校验原文和对白完整性" };
+    if (status === "persisting" || task.executionPhase === "persisting") return { current: 5, description: "正在保存角色、场景和镜头" };
+    return { current: 2, description: status === "analyzing" ? "模型正在理解剧本原文" : "正在请求文本模型" };
+}
 
 export default function DramaProjectPage() {
     const router = useRouter();
@@ -78,6 +90,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const [agentOpen, setAgentOpen] = useState(false);
     const [selectedShotId, setSelectedShotId] = useState<string>();
     const [analyzing, setAnalyzing] = useState(false);
+    const [contentLifecycle, setContentLifecycle] = useState<{ current: number; description: string; status?: "process" | "error" }>();
     const [designing, setDesigning] = useState(false);
     const [versionsOpen, setVersionsOpen] = useState(false);
     const [versions, setVersions] = useState<DramaProjectVersion[]>([]);
@@ -103,6 +116,10 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     useEffect(() => {
         setSelectedShotId(undefined);
     }, [episode.id]);
+    useEffect(() => {
+        if (episode.contentTaskId) setContentLifecycle({ current: 1, description: "等待后台 Worker 接手" });
+        else if (!episode.contentError) setContentLifecycle(undefined);
+    }, [episode.contentError, episode.contentTaskId, episode.id]);
     useDramaAudioQueue(project, episode, config, updateShot);
     const analyzeScript = async () => {
         if (!episode.script.trim()) return message.warning("请先填写剧本内容");
@@ -139,7 +156,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         const taskId = episode.contentTaskId;
         if (!taskId) return;
         const controller = new AbortController();
-        void waitForTextGenerationTask(config, { id: taskId, model: config.textModel || config.model }, { signal: controller.signal, timeoutMs: 0 })
+        void waitForTextGenerationTask(config, { id: taskId, model: config.textModel || config.model }, { signal: controller.signal, timeoutMs: 0, onState: (task) => setContentLifecycle(dramaContentLifecycleLabel(task)) })
             .then((content) => {
                 if (controller.signal.aborted) return;
                 const analysis = JSON.parse(content) as DramaContentAnalysis;
@@ -150,6 +167,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             .catch((error) => {
                 if (controller.signal.aborted) return;
                 const detail = error instanceof Error ? error.message : "AI 剧本解析失败";
+                setContentLifecycle((current) => ({ current: current?.current ?? 0, description: detail, status: "error" }));
                 updateEpisode(project.id, episode.id, { contentTaskId: undefined, contentError: detail });
                 message.error(detail);
             });
@@ -464,6 +482,9 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                     project={project}
                                     episode={episode}
                                     analyzing={analyzing || Boolean(episode.contentTaskId)}
+                                    lifecycle={
+                                        episode.contentTaskId ? contentLifecycle || { current: 1, description: "等待后台 Worker 接手" } : analyzing ? { current: 0, description: "正在创建整理任务" } : episode.contentError ? contentLifecycle : undefined
+                                    }
                                     onAnalyze={() => void analyzeScript()}
                                     onStageChange={changeStage}
                                     selectedShotId={selectedShotId}
