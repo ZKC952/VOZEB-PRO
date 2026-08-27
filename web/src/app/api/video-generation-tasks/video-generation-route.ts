@@ -323,9 +323,23 @@ export async function createUpstream(
         ...(lastFrameUrl ? { last_frame: lastFrameUrl, last_frame_url: lastFrameUrl } : {}),
     };
     const globalPreset = globalAiOpcVideoPreset(channel.advancedConfig, channel.model);
-    const multipart = channel.advancedConfig?.requestTemplate?.trim().toLowerCase().startsWith("multipart/form-data") === true;
+    const requestTemplate = channel.advancedConfig?.requestTemplate?.trim() || "";
+    const multipartTemplate = requestTemplate.toLowerCase().startsWith("multipart/form-data");
+    const structuredOpenAiReferences = multipartTemplate && Boolean(videos.length || audios.length);
+    const multipart = multipartTemplate && !structuredOpenAiReferences;
     const payload = multipart
         ? undefined
+        : structuredOpenAiReferences
+          ? {
+                model: channel.model,
+                prompt,
+                duration: values.duration,
+                resolution: values.resolution,
+                ratio: values.ratio,
+                content: values.content,
+                generate_audio: generateAudio,
+                watermark: booleanValue(raw.videoWatermark),
+            }
         : channel.advancedConfig?.protocol === "vozeb-recommended"
           ? buildVozebRecommendedVideoRequest({
                 model: channel.model,
@@ -376,7 +390,7 @@ export async function createUpstream(
                       firstFrame: firstFrameUrl || undefined,
                       lastFrame: lastFrameUrl || undefined,
                   })
-                : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
+                : buildVideoProviderRequest(requestTemplate, defaults, values);
     const requestBody = multipart
         ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number, width: dimensions.width, height: dimensions.height, imageUrls: firstFrameUrl ? [firstFrameUrl] : images, origin, cookie })
         : JSON.stringify(payload);

@@ -467,7 +467,7 @@ describe("video generation candidate failover", () => {
                     },
                 },
             ],
-            logicalModels: [{ ...settings.logicalModels[0], bindings: [settings.logicalModels[0].bindings[0]] }],
+            logicalModels: [{ ...settings.logicalModels[0], bindings: [{ ...settings.logicalModels[0].bindings[0], capabilityProfile: { supportsReferenceVideo: true } }] }],
         });
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-openai", status: "queued" }));
         const reference = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -491,6 +491,27 @@ describe("video generation candidate failover", () => {
 
         expect(intelligentResponse.status).toBe(200);
         expect(intelligentBody.get("size")).toBeNull();
+
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-openai-reference-video", status: "queued" }));
+        const videoResponse = await POST(request({ model: "video", videoSeconds: "5", size: "16:9" }, [{ type: "video", url: "https://cdn.example.com/reference.mp4" }]));
+        const videoInit = (mocks.fetchInternalApi.mock.calls[2] as [string, RequestInit])[1];
+        const videoBody = JSON.parse(String(videoInit.body));
+
+        expect(videoResponse.status).toBe(200);
+        expect(new Headers(videoInit.headers).get("content-type")).toBe("application/json");
+        expect(videoBody).toEqual({
+            model: "video-one",
+            prompt: expect.stringContaining("A test video"),
+            duration: 5,
+            resolution: "720p",
+            ratio: "16:9",
+            content: [
+                { type: "text", text: expect.stringContaining("A test video") },
+                { type: "video_url", role: "reference_video", video_url: { url: "https://cdn.example.com/reference.mp4" } },
+            ],
+            generate_audio: true,
+            watermark: false,
+        });
     });
 
     it("persists the Drama project, episode and shot task context", async () => {
