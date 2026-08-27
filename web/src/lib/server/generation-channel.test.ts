@@ -55,8 +55,23 @@ describe("resolveSystemGenerationChannel", () => {
     });
 
     it("uses the effective logical binding reference capabilities at runtime", () => {
-        const channel = { id: "one", name: "One", enabled: true, baseUrl: "https://one.example.com/v1", apiKey: "secret", apiFormat: "openai" as const, models: ["video-one"], advancedConfig: { protocol: "openai", supportsReferenceImage: true, supportsReferenceVideo: false, supportsReferenceAudio: false } as never };
-        const resolved = { logicalModelId: "video", upstreamModel: "video-one", channelId: "one", channel, capabilityProfile: { supportsReferenceImage: true, supportsReferenceVideo: true, supportsReferenceAudio: false, supportsAsync: true, supportsCancel: false, supportsWebhook: false } };
+        const channel = {
+            id: "one",
+            name: "One",
+            enabled: true,
+            baseUrl: "https://one.example.com/v1",
+            apiKey: "secret",
+            apiFormat: "openai" as const,
+            models: ["video-one"],
+            advancedConfig: { protocol: "openai", supportsReferenceImage: true, supportsReferenceVideo: false, supportsReferenceAudio: false } as never,
+        };
+        const resolved = {
+            logicalModelId: "video",
+            upstreamModel: "video-one",
+            channelId: "one",
+            channel,
+            capabilityProfile: { supportsReferenceImage: true, supportsReferenceVideo: true, supportsReferenceAudio: false, supportsAsync: true, supportsCancel: false, supportsWebhook: false },
+        };
 
         expect(toSystemGenerationChannel(resolved as never).advancedConfig).toMatchObject({ supportsReferenceImage: true, supportsReferenceVideo: true, supportsReferenceAudio: false });
     });
