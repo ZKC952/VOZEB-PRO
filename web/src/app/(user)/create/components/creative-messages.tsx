@@ -263,11 +263,13 @@ function CreativeMediaRound({
                 <div className="flex min-w-0 items-start gap-4 sm:gap-5">
                     <CreativeAssistantAvatar logoUrl={siteLogoUrl} />
                     <div className="min-w-0 flex-1">
-                        {!isFailedMediaRound && assistantMessage.status !== "running" ? (
+                        {!isFailedMediaRound ? (
                             <>
                                 <div className="mb-2 flex w-fit max-w-full flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                                    <h2 className="truncate text-[17px] font-semibold leading-7 text-[#1f2937] dark:text-[#f3f5f7]">{resultTitle}</h2>
-                                    <CreativeRunTiming run={run} time={assistantMessage.createdAt} />
+                                    <h2 className="truncate text-[17px] font-semibold leading-7 text-[#1f2937] dark:text-[#f3f5f7]">
+                                        {assistantMessage.status === "running" ? (mode === "video" ? "正在生成视频" : mode === "audio" ? "正在生成音频" : "正在生成图片") : resultTitle}
+                                    </h2>
+                                    {assistantMessage.status === "running" ? null : <CreativeRunTiming run={run} time={assistantMessage.createdAt} />}
                                 </div>
                                 <CreativeRunSummary run={run} modelNames={modelNames} />
                             </>
@@ -276,7 +278,7 @@ function CreativeMediaRound({
                             {isFailedMediaRound ? (
                                 <CreativeGenerationFailure message={failedTasks.length === 1 ? failedTasks[0]?.error || displayContent : displayContent} onRetry={() => onRetryMessage(assistantMessage, run)} />
                             ) : assistantMessage.status === "running" ? (
-                                <CreativeGenerationWaiting run={run} message={assistantMessage} />
+                                <CreativeGenerationWaiting run={run} message={assistantMessage} readyAssets={outputAssets} />
                             ) : showAssistantText ? (
                                 <div
                                     className={cn(

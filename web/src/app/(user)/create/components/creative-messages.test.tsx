@@ -475,7 +475,7 @@ describe("CreativeMessages", () => {
                             status: "running",
                             generationPreferences: { mode: "image", image: { size: "1:1", quality: "high" } },
                             assetIds: [],
-                            tasks: [{ id: "image-task", title: "图片生成", type: "image", status: "running" }],
+                            tasks: [{ id: "image-task", title: "图片生成", type: "image", model: "image-model", count: 2, status: "running" }],
                             createdAt: now,
                             updatedAt: now,
                         },
@@ -491,9 +491,15 @@ describe("CreativeMessages", () => {
         );
 
         expect(markup).toContain('data-testid="creative-generation-waiting"');
+        expect(markup).toContain('data-slot-count="2"');
+        expect(markup.match(/data-testid="creative-media-loading"/g)).toHaveLength(2);
         expect(markup).toContain("主人，画面正在一点点显现");
         expect(markup).toContain("已等待");
-        expect(markup).not.toContain("已为你生成图片");
+        expect(markup).toContain("正在生成图片");
+        expect(markup).toContain('aria-label="本轮创作参数"');
+        expect(markup).toContain("image-model");
+        expect(markup).toContain("1:1");
+        expect(markup).toContain("高画质");
         expect(markup).not.toContain("正在处理「图片生成」");
     });
 

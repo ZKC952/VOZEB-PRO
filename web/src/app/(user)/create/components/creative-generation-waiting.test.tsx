@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { creativeGenerationWaitingCopy, formatCreativeWaitingTime } from "./creative-generation-waiting";
+import { creativeGenerationWaitingCopy, creativeMediaLoadingSlots, formatCreativeWaitingTime } from "./creative-generation-waiting";
 
 describe("creative generation waiting", () => {
     it("uses the real task phase before elapsed-time comfort copy", () => {
@@ -23,5 +23,41 @@ describe("creative generation waiting", () => {
         expect(formatCreativeWaitingTime(42)).toBe("42秒");
         expect(formatCreativeWaitingTime(72)).toBe("1分12秒");
         expect(formatCreativeWaitingTime(3_661)).toBe("1小时1分1秒");
+    });
+
+    it("creates one independent loading slot for each pending image and video result", () => {
+        const run = {
+            id: "run",
+            conversationId: "conversation",
+            inputMessageId: "user",
+            assistantMessageId: "assistant",
+            status: "running" as const,
+            assetIds: [],
+            tasks: [
+                { id: "images", title: "生成图片", type: "image" as const, model: "image-model", count: 3, status: "running" as const },
+                { id: "videos", title: "生成视频", type: "video" as const, model: "video-model", count: 2, status: "running" as const },
+            ],
+        };
+
+        const slots = creativeMediaLoadingSlots(run, [{ type: "image", status: "ready" }]);
+
+        expect(slots).toHaveLength(4);
+        expect(slots.map((slot) => slot.type)).toEqual(["image", "image", "video", "video"]);
+        expect(slots.map((slot) => slot.model)).toEqual(["image-model", "image-model", "video-model", "video-model"]);
+    });
+
+    it("removes the last fallback loading slot after its result is ready", () => {
+        const run = {
+            id: "planning-run",
+            conversationId: "conversation",
+            inputMessageId: "user",
+            assistantMessageId: "assistant",
+            status: "running" as const,
+            generationPreferences: { mode: "image" as const, image: { count: 1 } },
+            assetIds: [],
+            tasks: [],
+        };
+
+        expect(creativeMediaLoadingSlots(run, [{ type: "image", status: "ready" }])).toEqual([]);
     });
 });
