@@ -44,14 +44,16 @@ export function CreativeGenerationWaiting({ run, message, readyAssets = [] }: { 
     );
 }
 
-type CreativeMediaLoadingSlot = { key: string; type: "image" | "video"; title: string; model?: string; ratio?: string };
+type CreativeMediaLoadingSlot = { key: string; type: "planning" | "image" | "video"; title: string; model?: string; ratio?: string };
 
 export function creativeMediaLoadingSlots(run: CreativeAgentRun | undefined, readyAssets: Array<Pick<CreativeAsset, "status" | "type">> = []): CreativeMediaLoadingSlot[] {
     const ready = { image: readyAssets.filter((asset) => asset.type === "image" && asset.status === "ready").length, video: readyAssets.filter((asset) => asset.type === "video" && asset.status === "ready").length };
     const tasks = (run?.tasks || []).filter((task) => (task.type === "image" || task.type === "video") && task.status !== "failed" && task.status !== "cancelled");
     if (!tasks.length) {
         const mode = creativeRunMode(run);
-        if (mode !== "image" && mode !== "video") return [];
+        if (mode !== "image" && mode !== "video") {
+            return !run || (run.status === "planning" && !run.tasks.length) ? [{ key: `${run?.id || "pending"}-planning`, type: "planning", title: "正在规划创作" }] : [];
+        }
         const preferences = run?.generationPreferences?.[mode];
         const count = Math.max(0, Math.floor(preferences?.count || 1) - ready[mode]);
         return Array.from({ length: count }, (_, index) => ({ key: `${run?.id || mode}-${index}`, type: mode, title: mode === "video" ? "视频生成" : "图片生成", ratio: preferences?.size }));
@@ -107,7 +109,7 @@ function CreativeMediaLoadingCard({ slot, index }: { slot: CreativeMediaLoadingS
     );
 }
 
-function loadingAspectRatio(value: string | undefined, type: "image" | "video") {
+function loadingAspectRatio(value: string | undefined, type: CreativeMediaLoadingSlot["type"]) {
     const match = value?.trim().match(/^(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)$/i);
     if (!match) return type === "video" ? "16 / 9" : "1 / 1";
     const width = Number(match[1]);

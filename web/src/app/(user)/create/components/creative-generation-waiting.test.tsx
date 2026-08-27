@@ -46,6 +46,21 @@ describe("creative generation waiting", () => {
         expect(slots.map((slot) => slot.model)).toEqual(["image-model", "image-model", "video-model", "video-model"]);
     });
 
+    it("shows a generic loading slot before planning has created media tasks", () => {
+        expect(creativeMediaLoadingSlots(undefined)).toEqual([{ key: "pending-planning", type: "planning", title: "正在规划创作" }]);
+        expect(
+            creativeMediaLoadingSlots({
+                id: "planning-run",
+                conversationId: "conversation",
+                inputMessageId: "user",
+                assistantMessageId: "assistant",
+                status: "planning",
+                assetIds: [],
+                tasks: [],
+            }),
+        ).toEqual([{ key: "planning-run-planning", type: "planning", title: "正在规划创作" }]);
+    });
+
     it("removes the last fallback loading slot after its result is ready", () => {
         const run = {
             id: "planning-run",
