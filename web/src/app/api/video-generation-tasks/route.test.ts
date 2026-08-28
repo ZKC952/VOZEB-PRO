@@ -243,7 +243,11 @@ describe("video generation candidate failover", () => {
         expect(response.status).toBe(202);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(false);
         expect(mocks.createVideoTask).toHaveBeenCalledOnce();
-        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith("video", "local-task", expect.objectContaining({ executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" }));
+        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith(
+            "video",
+            "local-task",
+            expect.objectContaining({ executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown", resultPayload: { reviewReason: expect.stringContaining("视频接口返回了无效 JSON") } }),
+        );
         expect(mocks.refundUserPoints).not.toHaveBeenCalled();
         expect(mocks.updateVideoTask).toHaveBeenCalledWith("local-task", expect.objectContaining({ upstream: expect.objectContaining({ pointsCost: 2.5, pointsUnits: expect.any(Number), pointsRecordId: "video-points-unknown", refunded: false }) }));
     });
@@ -267,6 +271,38 @@ describe("video generation candidate failover", () => {
         expect(response.status).toBe(502);
         expect((await response.json()).error).toBe("登录验证失败");
         expect(mocks.createVideoTask).toHaveBeenCalledOnce();
+    });
+
+    it("treats any local protocol request-construction error as a concrete safe failure", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: [
+                {
+                    ...channels[0],
+                    advancedConfig: {
+                        protocol: "custom",
+                        modelConfigs: {
+                            "video-one": {
+                                capability: "video",
+                                protocol: "custom",
+                                createPath: "/videos",
+                                requestTemplate: "{invalid-json",
+                                resultField: "id",
+                            },
+                        },
+                    },
+                },
+            ],
+            logicalModels: [{ ...settings.logicalModels[0], bindings: [settings.logicalModels[0].bindings[0]] }],
+        });
+
+        const response = await POST(request());
+
+        expect(response.status).toBe(502);
+        expect(await response.json()).toMatchObject({ error: "高级请求模板必须是有效 JSON", canRetry: true });
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+        expect(mocks.scheduleGenerationTask.mock.calls.some(([, , patch]) => patch.executionPhase === "needs_review")).toBe(false);
+        expect(mocks.transitionVideoTask).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: "error", error: "高级请求模板必须是有效 JSON", retryable: true }));
     });
 
     it("enqueues a GlobalAiOpc task for the recovery worker after creation", async () => {
@@ -484,6 +520,17 @@ describe("video generation candidate failover", () => {
         expect(body.get("seconds")).toBe("5");
         expect(body.get("size")).toBe("1280x720");
         expect(body.get("input_reference")).toBeInstanceOf(File);
+
+        const excessiveResponse = await POST(
+            request({ model: "video", videoSeconds: "5", size: "16:9" }, [
+                { type: "image", url: reference },
+                { type: "image", url: `${reference}#second` },
+            ]),
+        );
+
+        expect(excessiveResponse.status).toBe(400);
+        expect((await excessiveResponse.json()).error).toBe("OpenAI 视频协议最多支持 1 张参考图");
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(1);
 
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-openai-auto", status: "queued" }));
         const intelligentResponse = await POST(request({ model: "video", videoSeconds: "5", size: "auto", vquality: "auto" }));
