@@ -135,7 +135,7 @@ export async function POST(request: Request) {
                         if (channel.advancedConfig?.protocol === "yumeng") assertYumengVideoReferences(channel.model, references);
                         assertReferenceUrls(channel.advancedConfig, references, Boolean(globalPreset));
                         const regularReferences = regularVideoReferences(references);
-                        if (channel.advancedConfig?.requestTemplate?.trim().toLowerCase().startsWith("multipart/form-data") && !regularReferences.some((reference) => reference.type === "video" || reference.type === "audio")) {
+                        if (channel.advancedConfig?.requestTemplate?.trim().toLowerCase().startsWith("multipart/form-data") && !usesStructuredReferenceBody(channel.advancedConfig, references)) {
                             assertOpenAiVideoImageReferences(referenceUrls(regularReferences, "image"));
                         }
                     }
@@ -330,7 +330,7 @@ export async function createUpstream(
     const globalPreset = globalAiOpcVideoPreset(channel.advancedConfig, channel.model);
     const requestTemplate = channel.advancedConfig?.requestTemplate?.trim() || "";
     const multipartTemplate = requestTemplate.toLowerCase().startsWith("multipart/form-data");
-    const structuredOpenAiReferences = multipartTemplate && Boolean(videos.length || audios.length);
+    const structuredOpenAiReferences = multipartTemplate && usesStructuredReferenceBody(channel.advancedConfig, references);
     const multipart = multipartTemplate && !structuredOpenAiReferences;
     let requestBody: FormData | string;
     try {
@@ -343,7 +343,7 @@ export async function createUpstream(
                     duration: values.duration,
                     resolution: values.resolution,
                     ratio: values.ratio,
-                    content: values.content,
+                    content: channel.advancedConfig?.protocol === "newapi" ? videoReferenceMediaContent(references) : values.content,
                     generate_audio: generateAudio,
                     watermark: booleanValue(raw.videoWatermark),
                 }
@@ -617,16 +617,22 @@ function referenceUrls(items: readonly VideoGenerationReference[], type: VideoGe
 }
 
 function videoReferenceContent(prompt: string, references: readonly VideoGenerationReference[]) {
-    return [
-        { type: "text", text: prompt },
-        ...references.map((reference) =>
-            reference.type === "image"
-                ? { type: "image_url", role: reference.role === "first_frame" || reference.role === "last_frame" ? reference.role : "reference_image", image_url: { url: reference.url } }
-                : reference.type === "video"
-                  ? { type: "video_url", role: "reference_video", video_url: { url: reference.url } }
-                  : { type: "audio_url", role: "reference_audio", audio_url: { url: reference.url } },
-        ),
-    ];
+    return [{ type: "text", text: prompt }, ...videoReferenceMediaContent(references)];
+}
+function videoReferenceMediaContent(references: readonly VideoGenerationReference[]) {
+    return references.map((reference) =>
+        reference.type === "image"
+            ? { type: "image_url", role: reference.role === "first_frame" || reference.role === "last_frame" ? reference.role : "reference_image", image_url: { url: reference.url } }
+            : reference.type === "video"
+              ? { type: "video_url", role: "reference_video", video_url: { url: reference.url } }
+              : { type: "audio_url", role: "reference_audio", audio_url: { url: reference.url } },
+    );
+}
+function usesStructuredReferenceBody(config: NonNullable<ReturnType<typeof toSystemGenerationChannel>>["advancedConfig"], references: readonly VideoGenerationReference[]) {
+    const regularReferences = regularVideoReferences(references);
+    if (regularReferences.some((reference) => reference.type === "video" || reference.type === "audio")) return true;
+    if (config?.protocol !== "newapi") return false;
+    return regularReferences.filter((reference) => reference.type === "image").length > 1 || references.some((reference) => reference.role === "first_frame" || reference.role === "last_frame");
 }
 function requestPublicOrigin(request: Request) {
     return resolvePublicRequestOrigin(request);
