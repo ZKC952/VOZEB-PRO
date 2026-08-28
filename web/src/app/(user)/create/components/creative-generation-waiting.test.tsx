@@ -75,4 +75,18 @@ describe("creative generation waiting", () => {
 
         expect(creativeMediaLoadingSlots(run, [{ type: "image", status: "ready" }])).toEqual([]);
     });
+
+    it("does not render loading slots for a task waiting for manual review", () => {
+        expect(
+            creativeMediaLoadingSlots({
+                id: "paused-run",
+                conversationId: "conversation",
+                inputMessageId: "user",
+                assistantMessageId: "assistant",
+                status: "paused",
+                assetIds: [],
+                tasks: [{ id: "video", title: "生成视频", type: "video", status: "needs_review", error: "视频协议最多支持 1 张参考图" }],
+            }),
+        ).toEqual([]);
+    });
 });

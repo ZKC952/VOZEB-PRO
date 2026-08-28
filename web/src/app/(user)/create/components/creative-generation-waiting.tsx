@@ -48,8 +48,9 @@ type CreativeMediaLoadingSlot = { key: string; type: "planning" | "image" | "vid
 
 export function creativeMediaLoadingSlots(run: CreativeAgentRun | undefined, readyAssets: Array<Pick<CreativeAsset, "status" | "type">> = []): CreativeMediaLoadingSlot[] {
     const ready = { image: readyAssets.filter((asset) => asset.type === "image" && asset.status === "ready").length, video: readyAssets.filter((asset) => asset.type === "video" && asset.status === "ready").length };
-    const tasks = (run?.tasks || []).filter((task) => (task.type === "image" || task.type === "video") && task.status !== "failed" && task.status !== "cancelled");
+    const tasks = (run?.tasks || []).filter((task) => (task.type === "image" || task.type === "video") && (task.status === "ready" || task.status === "running"));
     if (!tasks.length) {
+        if (run && run.status !== "planning" && run.status !== "running") return [];
         const mode = creativeRunMode(run);
         if (mode !== "image" && mode !== "video") {
             return !run || (run.status === "planning" && !run.tasks.length) ? [{ key: `${run?.id || "pending"}-planning`, type: "planning", title: "正在规划创作" }] : [];
